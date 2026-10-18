@@ -250,4 +250,7 @@ examples/config.conf     示例配置
 
 ## License
 
-MIT，见 [LICENSE](LICENSE)。
+GNU General Public License v3.0 or later（`GPL-3.0-or-later`），许可证全文见 [LICENSE](LICENSE)。
+
+本项目是自由软件：你可以依据自由软件基金会发布的 GNU 通用公共许可证第 3 版（或你选择的任何更新版本）
+重新分发和/或修改它。分发时请保留许可证与版权声明，并按 GPL 要求提供对应源代码。
