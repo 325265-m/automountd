@@ -181,12 +181,7 @@ impl UdevMonitor {
             Command::new("udevadm")
         };
         command
-            .args([
-                "monitor",
-                "--udev",
-                "--subsystem-match=block",
-                "--property",
-            ])
+            .args(["monitor", "--udev", "--subsystem-match=block", "--property"])
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::null());
@@ -248,7 +243,10 @@ impl UdevMonitor {
             return;
         }
         if !platform::terminate_process(self.pid) {
-            logging::debug(format!("无法向 udevadm monitor（pid {}）发送终止信号", self.pid));
+            logging::debug(format!(
+                "无法向 udevadm monitor（pid {}）发送终止信号",
+                self.pid
+            ));
         }
         std::thread::sleep(Duration::from_millis(300));
         if platform::process_alive(self.pid) && platform::kill_process(self.pid) {
@@ -303,6 +301,7 @@ impl PollMonitor {
                 interval.as_millis()
             ));
             let mut previous: HashSet<String> = HashSet::new();
+            let mut first_poll = true;
             loop {
                 if platform::stop_requested() {
                     return;
@@ -310,6 +309,17 @@ impl PollMonitor {
                 let devices = devices::list_devices(&*runner, false, true);
                 let current: HashSet<String> =
                     devices.iter().map(|device| device.name.clone()).collect();
+
+                // 第一轮只建立基线：这些设备在服务启动前就存在，应交给
+                // auto_mount_on_boot/reconcile 处理，不能伪装成热插拔事件。
+                if first_poll {
+                    first_poll = false;
+                    previous = current;
+                    if !sleep_until(interval) {
+                        return;
+                    }
+                    continue;
+                }
 
                 for name in current.difference(&previous) {
                     if sender.send(poll_event("add", name)).is_err() {
@@ -417,7 +427,11 @@ SUBSYSTEM=block
         let dir = TempDir::new("udev");
         let path = dir.write("monitor.txt", &text);
         let events = parse_udevadm_output(&std::fs::read_to_string(path).unwrap());
-        assert_eq!(events.len(), 2, "只保留 block 的 add/remove/change: {events:?}");
+        assert_eq!(
+            events.len(),
+            2,
+            "只保留 block 的 add/remove/change: {events:?}"
+        );
         assert_eq!(events[0].action, "add");
         assert_eq!(events[0].devname, "/dev/sdb");
         assert_eq!(events[1].action, "remove");
@@ -440,9 +454,7 @@ SUBSYSTEM=block
         assert!(events[0].devtype.is_none());
 
         // 既没有 DEVNAME 也没有 devpath 的块被丢弃
-        assert!(
-            parse_udevadm_output("UDEV  [1.0] add\nACTION=add\nSUBSYSTEM=block\n").is_empty()
-        );
+        assert!(parse_udevadm_output("UDEV  [1.0] add\nACTION=add\nSUBSYSTEM=block\n").is_empty());
         // 空输入、噪声输入都安全
         assert!(parse_udevadm_output("").is_empty());
         assert!(parse_udevadm_output("monitor will print the received events for:\n").is_empty());

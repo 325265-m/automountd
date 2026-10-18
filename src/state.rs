@@ -391,7 +391,11 @@ mod tests {
             owner_uid: Some(1000),
             reason: "hotplug".to_string(),
             mounted_at: 1_700_000_000,
-            options: vec!["nosuid".to_string(), "nodev".to_string(), "uid=1000".to_string()],
+            options: vec![
+                "nosuid".to_string(),
+                "nodev".to_string(),
+                "uid=1000".to_string(),
+            ],
         }
     }
 
@@ -426,7 +430,12 @@ mod tests {
 
         let text = fs::read_to_string(&state.path).unwrap();
         assert!(text.starts_with(STATE_HEADER));
-        assert_eq!(text.lines().filter(|line| line.starts_with("mount\t")).count(), 1);
+        assert_eq!(
+            text.lines()
+                .filter(|line| line.starts_with("mount\t"))
+                .count(),
+            1
+        );
         assert!(
             text.contains("USB%09Disk%0A2"),
             "卷标中的 TAB / 换行未被转义: {text}"

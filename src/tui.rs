@@ -135,7 +135,11 @@ pub fn run(config: &Config) -> Result<()> {
     Ok(())
 }
 
-fn fetch_rows(config: &Config, runner: &dyn CommandRunner, include_all: bool) -> Result<Vec<Vec<String>>> {
+fn fetch_rows(
+    config: &Config,
+    runner: &dyn CommandRunner,
+    include_all: bool,
+) -> Result<Vec<Vec<String>>> {
     if ctl::is_running(&config.ctl_socket) {
         let response = ctl::request(
             &config.ctl_socket,
@@ -170,7 +174,11 @@ fn render(config: &Config, rows: &[Vec<String>], include_all: bool, colors: &Col
         "挂载根目录: {}    设备数: {}{}",
         config.mount_root.display(),
         rows.len(),
-        if include_all { "（显示全部）" } else { "" }
+        if include_all {
+            "（显示全部）"
+        } else {
+            ""
+        }
     );
     println!();
 
@@ -220,7 +228,7 @@ fn mount_device(config: &Config, reference: &str) -> Result<String> {
         let response = ctl::request(
             &config.ctl_socket,
             &CtlRequest::new("mount").arg(reference).arg("0").arg("0"),
-            std::time::Duration::from_secs(120),
+            std::time::Duration::from_secs(config.mount_timeout_seconds.saturating_add(30)),
         )?;
         if !response.ok {
             return Err(Error::new(ErrorKind::Mount, response.message));
@@ -233,13 +241,7 @@ fn mount_device(config: &Config, reference: &str) -> Result<String> {
 
     crate::platform::require_root("挂载")?;
     let manager_runner: Arc<dyn CommandRunner> = Arc::new(SystemRunner);
-    let result = crate::cli::local_mount(
-        config,
-        manager_runner,
-        reference,
-        false,
-        false,
-    )?;
+    let result = crate::cli::local_mount(config, manager_runner, reference, false, false)?;
     Ok(format!(
         "已挂载 {} -> {}",
         result.device.path,
@@ -251,11 +253,8 @@ fn umount_device(config: &Config, reference: &str) -> Result<String> {
     if ctl::is_running(&config.ctl_socket) {
         let response = ctl::request(
             &config.ctl_socket,
-            &CtlRequest::new("umount")
-                .arg(reference)
-                .arg("0")
-                .arg("0"),
-            std::time::Duration::from_secs(60),
+            &CtlRequest::new("umount").arg(reference).arg("0").arg("0"),
+            std::time::Duration::from_secs(config.unmount_timeout_seconds.saturating_add(30)),
         )?;
         if !response.ok {
             return Err(Error::new(ErrorKind::Mount, response.message));

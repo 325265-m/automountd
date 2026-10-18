@@ -154,11 +154,16 @@ pub fn find_entry<'a>(
     if source.is_none() && target.is_none() {
         return None;
     }
-    entries.iter().find(|entry| entry_matches(entry, source, target))
+    entries
+        .iter()
+        .find(|entry| entry_matches(entry, source, target))
 }
 
 /// 添加一条记录，返回 (是否修改, 说明)。
 pub fn add_entry(path: &Path, entry: &FstabEntry) -> Result<(bool, String)> {
+    validate_entry(entry)?;
+    let resolved = resolve_target(path);
+    let path = resolved.as_path();
     let text = read_or_empty(path)?;
     let entries = parse_fstab(&text);
 
@@ -213,6 +218,13 @@ pub fn remove_entry(
     if source.is_none() && target.is_none() {
         return Ok((false, "未指定要删除的设备或挂载点".to_string()));
     }
+    for value in [source, target].into_iter().flatten() {
+        if value.contains('\n') || value.contains('\r') {
+            return Err(Error::config("fstab 字段不能包含换行符"));
+        }
+    }
+    let resolved = resolve_target(path);
+    let path = resolved.as_path();
     let text = read_or_empty(path)?;
     let entries = parse_fstab(&text);
     let matched: Vec<&FstabEntry> = entries
@@ -338,22 +350,62 @@ fn parent_of(path: &Path) -> PathBuf {
     }
 }
 
-/// 写入前备份为 `<文件名>.automountd.bak`；文件不存在时不需要备份。
+/// 写入前备份为 `<文件名>.automountd.bak`；文件不存在或已有备份时不再覆盖，
+/// 确保第一次操作前的原始内容始终可回滚。
 fn backup_file(path: &Path) -> Result<()> {
     if !path.exists() {
         return Ok(());
     }
     let backup = path.with_file_name(format!("{}.automountd.bak", file_name_of(path)));
+    if backup.exists() {
+        return Ok(());
+    }
     fs::copy(path, &backup).map_err(|err| {
         Error::new(
             ErrorKind::Io,
-            format!("备份 {} 到 {} 失败: {err}", path.display(), backup.display()),
+            format!(
+                "备份 {} 到 {} 失败: {err}",
+                path.display(),
+                backup.display()
+            ),
         )
     })?;
     Ok(())
 }
 
-/// 临时文件 + `rename` 原子替换，尽量保留原文件权限。
+/// 写 fstab 前校验字段，避免换行注入出额外的挂载记录。
+fn validate_entry(entry: &FstabEntry) -> Result<()> {
+    for (name, value) in [
+        ("source", entry.source.as_str()),
+        ("target", entry.target.as_str()),
+        ("fstype", entry.fstype.as_str()),
+        ("dump", entry.dump.as_str()),
+        ("passno", entry.passno.as_str()),
+    ] {
+        if value.contains('\n') || value.contains('\r') {
+            return Err(Error::config(format!("fstab 字段 {name} 不能包含换行符")));
+        }
+    }
+    if entry.target.is_empty() || entry.source.is_empty() {
+        return Err(Error::config("fstab 的 source/target 不能为空"));
+    }
+    for option in &entry.options {
+        if option.contains('\n') || option.contains('\r') {
+            return Err(Error::config("fstab 挂载选项不能包含换行符"));
+        }
+    }
+    Ok(())
+}
+
+/// 若 fstab 本身是符号链接，写入其真实目标，避免把链接替换成普通文件。
+fn resolve_target(path: &Path) -> PathBuf {
+    match fs::canonicalize(path) {
+        Ok(resolved) => resolved,
+        Err(_) => path.to_path_buf(),
+    }
+}
+
+/// 临时文件 + `rename` 原子替换，尽量保留原文件权限与属主。
 fn write_atomic(path: &Path, text: &str) -> Result<()> {
     let parent = parent_of(path);
     fs::create_dir_all(&parent).map_err(|err| {
@@ -381,15 +433,28 @@ fn write_atomic(path: &Path, text: &str) -> Result<()> {
                 format!("写入 {} 失败: {err}", tmp.display()),
             ));
         }
-        file.flush().ok();
+        if let Err(err) = file.sync_all() {
+            let _ = fs::remove_file(&tmp);
+            return Err(Error::new(
+                ErrorKind::Io,
+                format!("同步 {} 失败: {err}", tmp.display()),
+            ));
+        }
     }
     #[cfg(unix)]
     {
-        use std::os::unix::fs::PermissionsExt;
-        let mode = fs::metadata(path)
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+        let metadata = fs::metadata(path).ok();
+        let mode = metadata
+            .as_ref()
             .map(|meta| meta.permissions().mode() & 0o7777)
             .unwrap_or(0o644);
         let _ = fs::set_permissions(&tmp, fs::Permissions::from_mode(mode));
+        if let Some(meta) = metadata {
+            if let Err(err) = crate::platform::chown(&tmp, meta.uid(), meta.gid()) {
+                crate::logging::warn(format!("恢复 {} 的属主失败: {err}", tmp.display()));
+            }
+        }
     }
     fs::rename(&tmp, path).map_err(|err| {
         let _ = fs::remove_file(&tmp);
@@ -503,18 +568,25 @@ mod tests {
         assert_eq!(entries.len(), 2);
         let added = &entries[1];
         assert!(added.options.contains(&"nofail".to_string()));
-        assert!(added.options.contains(&"x-systemd.device-timeout=10".to_string()));
+        assert!(added
+            .options
+            .contains(&"x-systemd.device-timeout=10".to_string()));
         assert_eq!(added.options[0], "uid=1000");
 
         let backup = dir.join("fstab.automountd.bak");
         assert!(backup.is_file(), "未生成备份文件");
-        assert!(std::fs::read_to_string(&backup).unwrap().contains("UUID=AAAA"));
+        assert!(std::fs::read_to_string(&backup)
+            .unwrap()
+            .contains("UUID=AAAA"));
 
         // 第二次添加应幂等
         let (changed, message) = add_entry(&path, &entry).unwrap();
         assert!(!changed);
         assert!(message.contains("已存在"));
-        assert_eq!(parse_fstab(&std::fs::read_to_string(&path).unwrap()).len(), 2);
+        assert_eq!(
+            parse_fstab(&std::fs::read_to_string(&path).unwrap()).len(),
+            2
+        );
     }
 
     #[test]

@@ -7,7 +7,7 @@
 //! 一条消息内以 TAB 分隔时不产生歧义。协议保持向后兼容：版本号变化即拒绝。
 
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::Sender;
 use std::sync::Arc;
 use std::thread::JoinHandle;
@@ -21,9 +21,21 @@ const PROTOCOL_VERSION: &str = "1";
 /// Unix socket 路径长度上限（`sun_path` 为 108 字节，留出余量）。
 #[cfg_attr(not(unix), allow(dead_code))]
 const MAX_SOCKET_PATH: usize = 100;
-/// 单次控制调用的超时时间。
+/// 单次控制调用的默认超时。
 #[cfg_attr(not(unix), allow(dead_code))]
-const JOB_TIMEOUT: Duration = Duration::from_secs(30);
+const DEFAULT_JOB_TIMEOUT: Duration = Duration::from_secs(30);
+/// 单个请求的最大字节数，防止恶意/故障客户端无限增长内存。
+#[cfg_attr(not(unix), allow(dead_code))]
+const MAX_REQUEST_BYTES: u64 = 64 * 1024;
+/// 单个响应的最大字节数（客户端侧限制）。
+#[cfg_attr(not(unix), allow(dead_code))]
+const MAX_RESPONSE_BYTES: usize = 4 * 1024 * 1024;
+/// 同时处理的连接数上限。
+#[cfg_attr(not(unix), allow(dead_code))]
+const MAX_CONNECTIONS: usize = 32;
+/// 响应结束标记，客户端读到它才停止。
+#[cfg_attr(not(unix), allow(dead_code))]
+const END_MARKER: &str = "END";
 
 /// 单个字段的百分号转义（只转义会破坏行/TAB 结构的字符）。
 fn encode_field(text: &str) -> String {
@@ -261,6 +273,10 @@ pub struct CtlServer {
     jobs: Sender<CtlJob>,
     #[cfg_attr(not(unix), allow(dead_code))]
     stop: Arc<AtomicBool>,
+    #[cfg_attr(not(unix), allow(dead_code))]
+    job_timeout: Duration,
+    #[cfg_attr(not(unix), allow(dead_code))]
+    active: Arc<AtomicUsize>,
     handle: Option<JoinHandle<()>>,
     #[cfg(unix)]
     listener: Option<std::os::unix::net::UnixListener>,
@@ -268,10 +284,18 @@ pub struct CtlServer {
 
 impl CtlServer {
     pub fn new(config: &Config, jobs: Sender<CtlJob>) -> Self {
+        // 挂载可能比默认 30 秒更久（大容量机械盘、日志重放），服务端必须等得住。
+        let last_resort = config
+            .mount_timeout_seconds
+            .max(config.unmount_timeout_seconds)
+            .saturating_add(20)
+            .max(DEFAULT_JOB_TIMEOUT.as_secs());
         Self {
             path: config.ctl_socket.clone(),
             jobs,
             stop: Arc::new(AtomicBool::new(false)),
+            job_timeout: Duration::from_secs(last_resort),
+            active: Arc::new(AtomicUsize::new(0)),
             handle: None,
             #[cfg(unix)]
             listener: None,
@@ -320,7 +344,8 @@ impl CtlServer {
                         )
                         .with_hint("请确认当前用户对上级目录有写权限")
                     })?;
-                    let _ = std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o755));
+                    let _ =
+                        std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o755));
                 }
             }
         }
@@ -357,24 +382,39 @@ impl CtlServer {
                 format!("无法把控制 socket 设为非阻塞: {err}"),
             )
         })?;
-        let worker = listener.try_clone().map_err(|err| {
-            Error::new(
-                ErrorKind::Io,
-                format!("无法复制控制 socket 句柄: {err}"),
-            )
-        })?;
+        let worker = listener
+            .try_clone()
+            .map_err(|err| Error::new(ErrorKind::Io, format!("无法复制控制 socket 句柄: {err}")))?;
         self.listener = Some(listener);
         // stop() 之后允许再次 start()。
         self.stop.store(false, Ordering::SeqCst);
 
         let jobs = self.jobs.clone();
         let stop = Arc::clone(&self.stop);
+        let active = Arc::clone(&self.active);
+        let job_timeout = self.job_timeout;
         let handle = std::thread::spawn(move || {
             while !stop.load(Ordering::SeqCst) {
                 match worker.accept() {
                     Ok((stream, _addr)) => {
+                        if active.load(Ordering::SeqCst) >= MAX_CONNECTIONS {
+                            crate::logging::warn("控制接口连接数已达上限，拒绝新连接");
+                            drop(stream);
+                            continue;
+                        }
+                        active.fetch_add(1, Ordering::SeqCst);
                         let jobs = jobs.clone();
-                        std::thread::spawn(move || handle_connection(stream, jobs));
+                        let active_for_thread = Arc::clone(&active);
+                        let spawned = std::thread::Builder::new()
+                            .name("automountd-ctl".to_string())
+                            .spawn(move || {
+                                handle_connection(stream, jobs, job_timeout);
+                                active_for_thread.fetch_sub(1, Ordering::SeqCst);
+                            });
+                        if let Err(err) = spawned {
+                            active.fetch_sub(1, Ordering::SeqCst);
+                            crate::logging::error(format!("无法创建控制连接线程: {err}"));
+                        }
                     }
                     Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {
                         std::thread::sleep(Duration::from_millis(50));
@@ -412,9 +452,11 @@ impl CtlServer {
     }
 }
 
-/// 读取对端 uid（Linux `SO_PEERCRED`）；其他平台返回 0。
+/// 读取对端 uid（Linux `SO_PEERCRED`）。
+///
+/// 失败必须返回错误而不是 0：0 是 root，fail-open 会让任意本地用户获得最高权限。
 #[cfg(unix)]
-fn peer_uid(stream: &std::os::unix::net::UnixStream) -> u32 {
+fn peer_uid(stream: &std::os::unix::net::UnixStream) -> Result<u32> {
     #[cfg(target_os = "linux")]
     {
         use std::os::raw::{c_int, c_void};
@@ -455,26 +497,68 @@ fn peer_uid(stream: &std::os::unix::net::UnixStream) -> u32 {
                 &mut len,
             )
         };
-        if rc == 0 {
-            cred.uid
-        } else {
-            0
+        if rc != 0 {
+            return Err(Error::new(
+                ErrorKind::Permission,
+                format!(
+                    "无法读取控制连接的对端身份: {}",
+                    std::io::Error::last_os_error()
+                ),
+            )
+            .with_hint("出于安全考虑已拒绝该连接，请检查内核/沙箱配置"));
         }
+        if len as usize != std::mem::size_of::<UCred>() {
+            return Err(Error::new(
+                ErrorKind::Permission,
+                "控制连接的对端身份信息不完整",
+            ));
+        }
+        Ok(cred.uid)
     }
     #[cfg(all(unix, not(target_os = "linux")))]
     {
         let _ = stream;
-        0
+        Err(
+            Error::new(ErrorKind::Permission, "当前平台无法校验控制连接身份")
+                .with_hint("automountd 控制接口只在 Linux 上启用"),
+        )
     }
 }
 
 #[cfg(unix)]
-fn handle_connection(mut stream: std::os::unix::net::UnixStream, jobs: Sender<CtlJob>) {
-    use std::io::{BufRead, BufReader, Write};
+fn handle_connection(
+    mut stream: std::os::unix::net::UnixStream,
+    jobs: Sender<CtlJob>,
+    job_timeout: Duration,
+) {
+    use std::io::{BufRead, BufReader, Read, Write};
 
-    let _ = stream.set_read_timeout(Some(JOB_TIMEOUT));
-    let _ = stream.set_write_timeout(Some(JOB_TIMEOUT));
-    let uid = peer_uid(&stream);
+    // 首包最多等 10 秒，避免只连不发的连接长期占用线程。
+    let _ = stream.set_read_timeout(Some(Duration::from_secs(10)));
+    let _ = stream.set_write_timeout(Some(Duration::from_secs(30)));
+
+    let write_response = |stream: &mut std::os::unix::net::UnixStream, response: &CtlResponse| {
+        let mut text = response.encode();
+        text.push('\n');
+        text.push_str(END_MARKER);
+        text.push('\n');
+        if let Err(err) = stream.write_all(text.as_bytes()) {
+            crate::logging::warn(format!("写回控制响应失败: {err}"));
+        }
+        let _ = stream.flush();
+    };
+
+    let uid = match peer_uid(&stream) {
+        Ok(uid) => uid,
+        Err(err) => {
+            write_response(
+                &mut stream,
+                &CtlResponse::failure("permission", &err.to_string()),
+            );
+            return;
+        }
+    };
+
     let reader_stream = match stream.try_clone() {
         Ok(handle) => handle,
         Err(err) => {
@@ -483,36 +567,45 @@ fn handle_connection(mut stream: std::os::unix::net::UnixStream, jobs: Sender<Ct
         }
     };
     let mut reader = BufReader::new(reader_stream);
+    let mut limited = reader.by_ref().take(MAX_REQUEST_BYTES);
     let mut line = String::new();
-    let response = match reader.read_line(&mut line) {
+
+    let response = match limited.read_line(&mut line) {
         Ok(0) => return,
         Ok(_) => {
-            let trimmed = line.trim_end_matches(['\r', '\n']);
-            match CtlRequest::decode(trimmed) {
-                Ok(request) => {
-                    crate::logging::debug(format!(
-                        "收到控制请求: {} {:?}（uid={uid}）",
-                        request.command, request.args
-                    ));
-                    let (reply, receiver) = std::sync::mpsc::channel();
-                    if let Err(err) = jobs.send(CtlJob {
-                        request,
-                        peer_uid: uid,
-                        reply,
-                    }) {
-                        crate::logging::error(format!("无法把控制请求转交主循环: {err}"));
-                        CtlResponse::failure("not-running", "守护进程主循环已退出")
-                    } else {
-                        match receiver.recv_timeout(JOB_TIMEOUT) {
-                            Ok(response) => response,
-                            Err(_) => CtlResponse::failure(
-                                "timeout",
-                                "等待守护进程处理请求超时（30 秒）",
-                            ),
+            if !line.ends_with('\n') {
+                CtlResponse::failure("protocol", "控制请求过长或缺少换行（上限 64 KiB）")
+            } else {
+                let trimmed = line.trim_end_matches(['\r', '\n']);
+                match CtlRequest::decode(trimmed) {
+                    Ok(request) => {
+                        crate::logging::debug(format!(
+                            "收到控制请求: {} {:?}（uid={uid}）",
+                            request.command, request.args
+                        ));
+                        let (reply, receiver) = std::sync::mpsc::channel();
+                        if let Err(err) = jobs.send(CtlJob {
+                            request,
+                            peer_uid: uid,
+                            reply,
+                        }) {
+                            crate::logging::error(format!("无法把控制请求转交主循环: {err}"));
+                            CtlResponse::failure("not-running", "守护进程主循环已退出")
+                        } else {
+                            match receiver.recv_timeout(job_timeout) {
+                                Ok(response) => response,
+                                Err(_) => CtlResponse::failure(
+                                    "timeout",
+                                    &format!(
+                                        "等待守护进程处理请求超时（{} 秒）；操作可能仍在进行，请用 status 确认",
+                                        job_timeout.as_secs()
+                                    ),
+                                ),
+                            }
                         }
                     }
+                    Err(err) => CtlResponse::failure("protocol", &err.message),
                 }
-                Err(err) => CtlResponse::failure("protocol", &err.message),
             }
         }
         Err(err) => {
@@ -521,12 +614,7 @@ fn handle_connection(mut stream: std::os::unix::net::UnixStream, jobs: Sender<Ct
         }
     };
 
-    let mut text = response.encode();
-    text.push('\n');
-    if let Err(err) = stream.write_all(text.as_bytes()) {
-        crate::logging::warn(format!("写回控制响应失败: {err}"));
-    }
-    let _ = stream.flush();
+    write_response(&mut stream, &response);
 }
 
 /// 连接控制 socket，超时后放弃（std 没有 `connect_timeout`，用线程包一层）。
@@ -546,7 +634,10 @@ fn connect_with_timeout(
         Ok(Ok(stream)) => Ok(stream),
         Ok(Err(err)) => Err(Error::new(
             ErrorKind::NotRunning,
-            format!("无法连接 automountd 控制 socket {}: {err}", socket.display()),
+            format!(
+                "无法连接 automountd 控制 socket {}: {err}",
+                socket.display()
+            ),
         )
         .with_hint("请先启动服务: sudo systemctl start automountd")),
         Err(_) => Err(Error::new(
@@ -561,11 +652,39 @@ fn connect_with_timeout(
     }
 }
 
+/// 读取一个完整响应：多行内容直到 `END` 行（或对端关闭）。
+#[cfg_attr(not(unix), allow(dead_code))]
+fn read_response_text<R: std::io::BufRead>(reader: &mut R) -> Result<String> {
+    let mut text = String::new();
+    let mut line = String::new();
+    loop {
+        line.clear();
+        let read = reader.read_line(&mut line).map_err(|err| {
+            Error::protocol(format!("读取控制响应失败: {err}"))
+                .with_hint("守护进程可能已退出或响应超时")
+        })?;
+        if read == 0 {
+            break;
+        }
+        if line.trim_end_matches(['\r', '\n']) == END_MARKER {
+            break;
+        }
+        if text.len() + line.len() > MAX_RESPONSE_BYTES {
+            return Err(Error::protocol("控制接口响应过大，已中止"));
+        }
+        text.push_str(&line);
+    }
+    if text.trim().is_empty() {
+        return Err(Error::protocol("控制接口返回空响应"));
+    }
+    Ok(text)
+}
+
 /// 客户端发送一次请求并等待响应。
 pub fn request(socket: &Path, request: &CtlRequest, timeout: Duration) -> Result<CtlResponse> {
     #[cfg(unix)]
     {
-        use std::io::{BufRead, BufReader, Write};
+        use std::io::{BufReader, Write};
 
         let stream = connect_with_timeout(socket, timeout)?;
         let _ = stream.set_read_timeout(Some(timeout));
@@ -585,14 +704,8 @@ pub fn request(socket: &Path, request: &CtlRequest, timeout: Duration) -> Result
             })?;
 
         let mut reader = BufReader::new(stream);
-        let mut text = String::new();
-        reader.read_line(&mut text).map_err(|err| {
-            Error::protocol(format!("读取控制响应失败: {err}"))
-                .with_hint("守护进程可能已退出或响应超时")
-        })?;
-        if text.trim().is_empty() {
-            return Err(Error::protocol("控制接口返回空响应"));
-        }
+        // 响应是多行的：服务器以 END 行结束（旧版本/异常退出则读到 EOF）。
+        let text = read_response_text(&mut reader)?;
         CtlResponse::decode(&text)
     }
     #[cfg(not(unix))]
@@ -626,6 +739,32 @@ pub fn default_socket(config: &Config) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reads_multiline_response_and_end_marker() {
+        let text = "OK\nM\tcount\t2\nR\t/dev/sdb1\tU 盘\nR\t/dev/sdc1\t100%\nEND\n";
+        let mut cursor = std::io::Cursor::new(text.as_bytes());
+        let body = read_response_text(&mut cursor).unwrap();
+        assert!(body.contains("R\t/dev/sdb1"));
+        let response = CtlResponse::decode(&body).unwrap();
+        assert_eq!(response.meta_value("count"), Some("2"));
+        assert_eq!(response.rows.len(), 2);
+        assert_eq!(response.rows[0][1], "U 盘");
+    }
+
+    #[test]
+    fn reads_response_without_end_marker_at_eof() {
+        let text = "OK\nM\tk\tv\n";
+        let mut cursor = std::io::Cursor::new(text.as_bytes());
+        let response = CtlResponse::decode(&read_response_text(&mut cursor).unwrap()).unwrap();
+        assert_eq!(response.meta_value("k"), Some("v"));
+    }
+
+    #[test]
+    fn rejects_empty_response() {
+        let mut cursor = std::io::Cursor::new("".as_bytes());
+        assert!(read_response_text(&mut cursor).is_err());
+    }
 
     #[test]
     fn request_encode_decode_roundtrip() {

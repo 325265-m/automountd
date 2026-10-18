@@ -4,21 +4,8 @@ use std::path::PathBuf;
 
 /// 永远不当作可挂载数据盘的设备类型。
 pub const NON_DATA_TYPES: &[&str] = &[
-    "loop",
-    "ram",
-    "zram",
-    "crypt",
-    "lvm",
-    "raid0",
-    "raid1",
-    "raid4",
-    "raid5",
-    "raid6",
-    "raid10",
-    "mpath",
-    "nbd",
-    "rbd",
-    "dm",
+    "loop", "ram", "zram", "crypt", "lvm", "raid0", "raid1", "raid4", "raid5", "raid6", "raid10",
+    "mpath", "nbd", "rbd", "dm",
 ];
 
 /// 一个块设备（整盘或分区）。
@@ -53,7 +40,10 @@ impl BlockDevice {
         self.removable
             || self.hotplug
             || matches!(
-                self.transport.as_deref().map(str::to_ascii_lowercase).as_deref(),
+                self.transport
+                    .as_deref()
+                    .map(str::to_ascii_lowercase)
+                    .as_deref(),
                 Some("usb") | Some("mmc") | Some("ieee1394") | Some("firewire") | Some("sdio")
             )
     }

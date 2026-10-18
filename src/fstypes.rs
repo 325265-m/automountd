@@ -20,9 +20,8 @@ pub const USERSPACE_FSTYPES: &[&str] = &[
 
 /// 内核原生就有完整权限模型、可以直接 `mount -t <自身>` 的文件系统。
 const NATIVE_FSTYPES: &[&str] = &[
-    "ext2", "ext3", "ext4", "xfs", "btrfs", "f2fs", "jfs", "reiserfs", "nilfs2", "bcachefs",
-    "zfs", "udf", "iso9660", "squashfs", "erofs", "hfsplus", "vfat", "exfat", "ntfs3", "ocfs2",
-    "gfs2",
+    "ext2", "ext3", "ext4", "xfs", "btrfs", "f2fs", "jfs", "reiserfs", "nilfs2", "bcachefs", "zfs",
+    "udf", "iso9660", "squashfs", "erofs", "hfsplus", "vfat", "exfat", "ntfs3", "ocfs2", "gfs2",
 ];
 
 /// 读取内核支持的文件系统列表。
@@ -86,9 +85,7 @@ pub fn choose_driver(fstype: &str, supported: &HashSet<String>) -> Result<String
             }
         }
         // FAT 家族统一由 vfat 驱动处理。
-        "fat" | "fat12" | "fat16" | "fat32" | "msdos" | "umsdos" | "vfat" => {
-            Ok("vfat".to_string())
-        }
+        "fat" | "fat12" | "fat16" | "fat32" | "msdos" | "umsdos" | "vfat" => Ok("vfat".to_string()),
         // 旧版 HFS 也由 hfsplus 驱动读取。
         "hfs" | "hfsplus" => Ok("hfsplus".to_string()),
         "exfat" if !has("exfat") => Err(Error::unsupported(
@@ -165,12 +162,7 @@ pub fn build_options(
             logging::debug(format!("忽略含未知占位符的挂载选项: {item}"));
             continue;
         }
-        let key = expanded
-            .split('=')
-            .next()
-            .unwrap_or("")
-            .trim()
-            .to_string();
+        let key = expanded.split('=').next().unwrap_or("").trim().to_string();
         if key.is_empty() {
             continue;
         }
@@ -295,10 +287,7 @@ mod tests {
             "ntfs3"
         );
         // 空的 supported 视为未知内核能力，仍优先 ntfs3
-        assert_eq!(
-            choose_driver("ntfs", &HashSet::new()).unwrap(),
-            "ntfs3"
-        );
+        assert_eq!(choose_driver("ntfs", &HashSet::new()).unwrap(), "ntfs3");
         // 内核没有 ntfs3 时退回用户态 ntfs-3g
         assert_eq!(
             choose_driver("ntfs", &supported(&["ext4", "vfat"])).unwrap(),
@@ -332,7 +321,10 @@ mod tests {
             "hfsplus"
         );
         for native in ["ext4", "xfs", "btrfs", "f2fs", "udf", "iso9660"] {
-            assert_eq!(choose_driver(native, &supported(&[native])).unwrap(), native);
+            assert_eq!(
+                choose_driver(native, &supported(&[native])).unwrap(),
+                native
+            );
         }
         // 即使内核列表里没写，已知原生类型也直接返回
         assert_eq!(choose_driver("xfs", &supported(&["ext4"])).unwrap(), "xfs");

@@ -51,12 +51,8 @@ impl CommandOutput {
 
 /// 执行外部命令并查询命令是否存在。
 pub trait CommandRunner: Send + Sync {
-    fn run(
-        &self,
-        program: &str,
-        args: &[&str],
-        timeout: Option<Duration>,
-    ) -> Result<CommandOutput>;
+    fn run(&self, program: &str, args: &[&str], timeout: Option<Duration>)
+        -> Result<CommandOutput>;
 
     fn which(&self, program: &str) -> bool;
 }
@@ -79,11 +75,8 @@ impl CommandRunner for SystemRunner {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
         let mut child = command.spawn().map_err(|err| {
-            Error::new(
-                ErrorKind::Command,
-                format!("无法执行 {program}: {err}"),
-            )
-            .with_hint("请确认 util-linux 等基础工具已安装，且 PATH 正确")
+            Error::new(ErrorKind::Command, format!("无法执行 {program}: {err}"))
+                .with_hint("请确认 util-linux 等基础工具已安装，且 PATH 正确")
         })?;
 
         let stdout = child.stdout.take();

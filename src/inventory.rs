@@ -309,7 +309,11 @@ mod tests {
         );
         let names: Vec<&str> = filtered.iter().map(|v| v.device.name.as_str()).collect();
         assert_eq!(names, vec!["sdb1"]);
-        assert!(filtered[0].decision.allowed, "{}", filtered[0].decision.message);
+        assert!(
+            filtered[0].decision.allowed,
+            "{}",
+            filtered[0].decision.message
+        );
 
         let all = build_views(
             &Config::default(),

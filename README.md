@@ -28,13 +28,15 @@
   - 挂载选项默认带 `nosuid,nodev`；
   - 卷标净化、挂载点包含性检查、符号链接检查，防止路径逃逸；
   - UUID 白名单/黑名单；
-  - 控制接口用 `SO_PEERCRED` 校验对端 uid，并受 `ctl_allowed_users` 限制。
-- **可靠卸载**：忙碌时自动重试一次，仍失败则提示占用进程；可选 `--lazy`、卸载后 `eject`/断电。
-- **fstab 持久化**：`automountd fstab add` 自动写入 `UUID=... <挂载点> <类型> nofail,x-systemd.device-timeout=10`，并备份原文件。
+  - 控制接口用 `SO_PEERCRED` 校验对端 uid，并受 `ctl_allowed_users` 限制；`--force` 仅 root 可用。
+- **可靠卸载**：忙碌时自动重试一次，仍失败则提示占用进程；可选 `--lazy`。lazy 卸载会跳过 `eject`/断电，
+  避免进程仍持有文件时造成数据丢失。
+- **fstab 持久化**：`automountd fstab add` 自动写入 `UUID=... <挂载点> <类型> nofail,x-systemd.device-timeout=10`，
+  备份原始文件、原子替换、拒绝写入系统目录。
 - **CLI + TUI**：`automountd list / mount / umount / status / doctor / tui`，输出按中英文宽度对齐。
 - **systemd 集成**：附带加固过的 unit，日志进 journald。
 
-> 状态说明：仓库已包含 108 个单元测试；Linux 专属代码通过 `cargo check --target x86_64-unknown-linux-gnu` 交叉检查，
+> 状态说明：仓库包含 113 个单元测试；Linux 专属代码通过 `cargo check --target x86_64-unknown-linux-gnu` 交叉检查，
 > 但真实挂载动作需要在 Linux 实机上验证（开发机为 Windows，无法执行 mount 系统调用）。
 
 ## 安装
@@ -163,9 +165,11 @@ exfat = uid={uid}, gid={gid}, umask=0022, iocharset=utf8
   其上的分区默认拒绝自动挂载（除非 UUID 在 `allowed_uuids` 中或手动 `--force`）。
 - **挂载点约束**：目标必须位于 `mount_root` 之下，且路径组件不允许符号链接；`..` 直接拒绝。
 - **权限模型**：守护进程以 root 运行；控制 socket 权限 0666 但每个连接用 `SO_PEERCRED` 取真实 uid，
-  按 `ctl_allowed_users` 授权；`shutdown`/`reload` 仅限 root 或当前桌面用户。
+  按 `ctl_allowed_users` 授权；`shutdown`/`reload` 仅限 root 或当前桌面用户；
+  `mount --force` 与卸载他人挂载仅 root 可用。控制请求有 64 KiB 上限、并发连接数上限与超时。
 - **不自动执行 fsck**、不自动解锁 LUKS、不修改分区表：只做挂载/卸载。
-- **fstab 写入**：先备份为 `fstab.automountd.bak`，临时文件 + rename 原子替换；使用 `nofail` 避免设备缺席时卡住开机。
+- **fstab 写入**：先备份为 `fstab.automountd.bak`，临时文件 + rename 原子替换并 `fsync`；使用 `nofail`
+  避免设备缺席时卡住开机；拒绝把挂载点写到 `mount_root` 之外或含换行的字段。
 
 ## fstab 持久化
 
@@ -196,14 +200,14 @@ sudo automountd fstab remove --target /media/alice/U盘
 | `unknown filesystem type` | 安装 `ntfs-3g` / `exfatprogs`；`automountd doctor` 会提示 |
 | 卸载 busy | `lsof +D <挂载点>` 或 `fuser -vm <挂载点>`；紧急用 `automountd umount --lazy` |
 | 权限不对 | 检查 `per_user_dirs`、`user`；`vfat/exfat/ntfs` 依赖 uid/gid 挂载选项 |
-| 想看会执行什么 | `automountd --dry-run mount /dev/sdb1` |
+| 想看会执行什么 | `automountd --dry-run mount /dev/sdb1`（服务运行时也强制本地 dry-run） |
 
 退出码：`0` 成功；`1` 一般错误；`3` 服务未运行；`4` 权限不足。
 
 ## 开发与测试
 
 ```bash
-cargo test --offline          # 108 个单元测试（纯逻辑，可在非 Linux 上跑）
+cargo test --offline          # 113 个单元测试（纯逻辑，可在非 Linux 上跑）
 cargo check --all-targets     # 类型检查
 cargo clippy --all-targets    # 静态检查
 cargo build --release --offline

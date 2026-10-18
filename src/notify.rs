@@ -276,8 +276,14 @@ mod tests {
         );
         // runuser 不可用时即使是 root 也直接调用 notify-send
         let runner = MockRunner::new().missing("runuser");
-        let (program, argv) =
-            build_notification(&runner, &user(1000, "alice"), "标题", "正文", "normal", true);
+        let (program, argv) = build_notification(
+            &runner,
+            &user(1000, "alice"),
+            "标题",
+            "正文",
+            "normal",
+            true,
+        );
         assert_eq!(program, "notify-send");
         assert_eq!(argv.first().map(String::as_str), Some("-a"));
     }
@@ -323,10 +329,7 @@ mod tests {
             "normal"
         ));
 
-        let runner = MockRunner::new().respond(
-            program,
-            CommandOutput::failure(1, "no display"),
-        );
+        let runner = MockRunner::new().respond(program, CommandOutput::failure(1, "no display"));
         assert!(!notify_unmounted(
             &config,
             &runner,

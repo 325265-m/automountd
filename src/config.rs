@@ -35,7 +35,13 @@ pub fn default_mount_options() -> BTreeMap<String, Vec<String>> {
     let mut map = BTreeMap::new();
     map.insert(
         "vfat".to_string(),
-        strings(&["uid={uid}", "gid={gid}", "umask=0022", "shortname=mixed", "utf8"]),
+        strings(&[
+            "uid={uid}",
+            "gid={gid}",
+            "umask=0022",
+            "shortname=mixed",
+            "utf8",
+        ]),
     );
     map.insert(
         "exfat".to_string(),
@@ -179,11 +185,10 @@ impl Config {
         if let Some(path) = path {
             let expanded = expand_tilde(path);
             if !expanded.is_file() {
-                return Err(Error::config(format!(
-                    "配置文件不存在: {}",
-                    expanded.display()
-                ))
-                .with_hint("运行 'automountd config init' 生成默认配置"));
+                return Err(
+                    Error::config(format!("配置文件不存在: {}", expanded.display()))
+                        .with_hint("运行 'automountd config init' 生成默认配置"),
+                );
             }
             return Self::from_file(&expanded);
         }
@@ -210,9 +215,8 @@ impl Config {
     }
 
     pub fn from_file(path: &Path) -> Result<Self> {
-        let text = fs::read_to_string(path).map_err(|err| {
-            Error::config(format!("无法读取配置文件 {}: {err}", path.display()))
-        })?;
+        let text = fs::read_to_string(path)
+            .map_err(|err| Error::config(format!("无法读取配置文件 {}: {err}", path.display())))?;
         let mut config = Self::parse(&text)?;
         config.path = Some(path.to_path_buf());
         Ok(config)
@@ -281,9 +285,7 @@ impl Config {
                 let name = parse_string(value);
                 self.user = if name.is_empty() { None } else { Some(name) };
             }
-            "auto_mount_on_hotplug" => {
-                self.auto_mount_on_hotplug = parse_bool(value, key, line)?
-            }
+            "auto_mount_on_hotplug" => self.auto_mount_on_hotplug = parse_bool(value, key, line)?,
             "auto_mount_on_boot" => self.auto_mount_on_boot = parse_bool(value, key, line)?,
             "auto_mount_internal_disks" => {
                 self.auto_mount_internal_disks = parse_bool(value, key, line)?
@@ -306,18 +308,14 @@ impl Config {
             "debounce_seconds" => self.debounce_seconds = parse_number(value, key, line)?,
             "retry_attempts" => self.retry_attempts = parse_number(value, key, line)?,
             "retry_delay_seconds" => self.retry_delay_seconds = parse_number(value, key, line)?,
-            "mount_timeout_seconds" => {
-                self.mount_timeout_seconds = parse_number(value, key, line)?
-            }
+            "mount_timeout_seconds" => self.mount_timeout_seconds = parse_number(value, key, line)?,
             "unmount_timeout_seconds" => {
                 self.unmount_timeout_seconds = parse_number(value, key, line)?
             }
             "reconcile_interval_seconds" => {
                 self.reconcile_interval_seconds = parse_number(value, key, line)?
             }
-            "poll_interval_seconds" => {
-                self.poll_interval_seconds = parse_number(value, key, line)?
-            }
+            "poll_interval_seconds" => self.poll_interval_seconds = parse_number(value, key, line)?,
             "suppress_remount_seconds" => {
                 self.suppress_remount_seconds = parse_number(value, key, line)?
             }
@@ -354,7 +352,9 @@ impl Config {
             if normalized == "/" {
                 problems.push("mount_root 不能是 /".to_string());
             }
-            for forbidden in ["/proc", "/sys", "/dev", "/boot", "/etc", "/usr", "/bin", "/sbin"] {
+            for forbidden in [
+                "/proc", "/sys", "/dev", "/boot", "/etc", "/usr", "/bin", "/sbin",
+            ] {
                 if normalized == forbidden || normalized.starts_with(&format!("{forbidden}/")) {
                     problems.push(format!("mount_root 不能位于 {forbidden} 之下"));
                     break;
@@ -375,7 +375,12 @@ impl Config {
         for (name, value, low, high) in [
             ("debounce_seconds", self.debounce_seconds, 0.0, 30.0),
             ("retry_delay_seconds", self.retry_delay_seconds, 0.1, 60.0),
-            ("poll_interval_seconds", self.poll_interval_seconds, 0.0, 3600.0),
+            (
+                "poll_interval_seconds",
+                self.poll_interval_seconds,
+                0.0,
+                3600.0,
+            ),
         ] {
             if !value.is_finite() || value < low || value > high {
                 problems.push(format!("{name} 必须在 {low}~{high} 之间，当前为 {value}"));
@@ -391,14 +396,24 @@ impl Config {
 
         for (name, value, low, high) in [
             ("mount_timeout_seconds", self.mount_timeout_seconds, 5, 600),
-            ("unmount_timeout_seconds", self.unmount_timeout_seconds, 5, 600),
+            (
+                "unmount_timeout_seconds",
+                self.unmount_timeout_seconds,
+                5,
+                600,
+            ),
             (
                 "reconcile_interval_seconds",
                 self.reconcile_interval_seconds,
                 0,
                 3600,
             ),
-            ("suppress_remount_seconds", self.suppress_remount_seconds, 0, 86_400),
+            (
+                "suppress_remount_seconds",
+                self.suppress_remount_seconds,
+                0,
+                86_400,
+            ),
         ] {
             if value < low || value > high {
                 problems.push(format!("{name} 必须在 {low}~{high} 之间，当前为 {value}"));
@@ -477,9 +492,15 @@ impl Config {
             bool_str(self.auto_mount_internal_disks)
         ));
         out.push_str("# 白名单：非空时只自动挂载这些 UUID（可用于放行内置磁盘）\n");
-        out.push_str(&format!("allowed_uuids = {}\n", self.allowed_uuids.join(", ")));
+        out.push_str(&format!(
+            "allowed_uuids = {}\n",
+            self.allowed_uuids.join(", ")
+        ));
         out.push_str("# 排除列表\n");
-        out.push_str(&format!("blocked_uuids = {}\n", self.blocked_uuids.join(", ")));
+        out.push_str(&format!(
+            "blocked_uuids = {}\n",
+            self.blocked_uuids.join(", ")
+        ));
         out.push_str(&format!(
             "blocked_labels = {}\n",
             self.blocked_labels.join(", ")
@@ -505,15 +526,9 @@ impl Config {
             bool_str(self.chown_native_filesystems)
         ));
         out.push_str("# 卸载失败时自动改用 umount -l（lazy）\n");
-        out.push_str(&format!(
-            "lazy_umount = {}\n",
-            bool_str(self.lazy_umount)
-        ));
+        out.push_str(&format!("lazy_umount = {}\n", bool_str(self.lazy_umount)));
         out.push_str("# 卸载后删除空挂载点目录\n");
-        out.push_str(&format!(
-            "cleanup_dirs = {}\n",
-            bool_str(self.cleanup_dirs)
-        ));
+        out.push_str(&format!("cleanup_dirs = {}\n", bool_str(self.cleanup_dirs)));
         out.push_str(&format!(
             "eject_after_unmount = {}\n",
             bool_str(self.eject_after_unmount)
@@ -594,20 +609,14 @@ impl Config {
     pub fn save(&self, path: &Path) -> Result<()> {
         let text = self.to_conf();
         let parent = path.parent().unwrap_or_else(|| Path::new("."));
-        fs::create_dir_all(parent).map_err(|err| {
-            Error::config(format!("无法创建目录 {}: {err}", parent.display()))
-        })?;
-        let tmp = parent.join(format!(
-            ".automountd.conf.{}.tmp",
-            std::process::id()
-        ));
+        fs::create_dir_all(parent)
+            .map_err(|err| Error::config(format!("无法创建目录 {}: {err}", parent.display())))?;
+        let tmp = parent.join(format!(".automountd.conf.{}.tmp", std::process::id()));
         {
-            let mut file = fs::File::create(&tmp).map_err(|err| {
-                Error::config(format!("无法写入 {}: {err}", tmp.display()))
-            })?;
-            file.write_all(text.as_bytes()).map_err(|err| {
-                Error::config(format!("写入 {} 失败: {err}", tmp.display()))
-            })?;
+            let mut file = fs::File::create(&tmp)
+                .map_err(|err| Error::config(format!("无法写入 {}: {err}", tmp.display())))?;
+            file.write_all(text.as_bytes())
+                .map_err(|err| Error::config(format!("写入 {} 失败: {err}", tmp.display())))?;
             file.flush().ok();
         }
         #[cfg(unix)]
@@ -720,7 +729,11 @@ fn parse_string(value: &str) -> String {
     if !((first == '"' && last == '"') || (first == '\'' && last == '\'')) {
         return trimmed.to_string();
     }
-    let inner: String = trimmed.chars().skip(1).take(trimmed.chars().count() - 2).collect();
+    let inner: String = trimmed
+        .chars()
+        .skip(1)
+        .take(trimmed.chars().count() - 2)
+        .collect();
     let mut output = String::with_capacity(inner.len());
     let mut escaped = false;
     for ch in inner.chars() {
@@ -809,7 +822,10 @@ exfat = uid={uid}
             config.mount_options.get("vfat").unwrap(),
             &vec!["uid={uid}", "gid={gid}", "umask=0022"]
         );
-        assert_eq!(config.mount_options.get("exfat").unwrap(), &vec!["uid={uid}"]);
+        assert_eq!(
+            config.mount_options.get("exfat").unwrap(),
+            &vec!["uid={uid}"]
+        );
         // 默认值仍然保留
         assert!(config.mount_options.contains_key("ntfs3"));
     }

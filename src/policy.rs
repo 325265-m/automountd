@@ -90,7 +90,8 @@ pub fn should_automount(
         return decision;
     }
 
-    let allowed_by_uuid = !config.allowed_uuids.is_empty() && config.is_uuid_allowed(device.uuid.as_deref());
+    let allowed_by_uuid =
+        !config.allowed_uuids.is_empty() && config.is_uuid_allowed(device.uuid.as_deref());
 
     if on_system_disk(device, system_disks) && !allowed_by_uuid {
         return Decision::deny("system-disk");
@@ -117,8 +118,7 @@ pub fn should_mount_manual(
     system_disks: &HashSet<String>,
     force: bool,
 ) -> Decision {
-    let data_type = !NON_DATA_TYPES.contains(&device.dev_type.as_str())
-        || device.dev_type == "lvm";
+    let data_type = !NON_DATA_TYPES.contains(&device.dev_type.as_str()) || device.dev_type == "lvm";
     if !data_type && !force {
         return Decision::deny_with(
             "not-a-data-device",
@@ -132,10 +132,7 @@ pub fn should_mount_manual(
         return Decision::deny("ignored-fstype");
     }
     if on_system_disk(device, system_disks) && !force {
-        return Decision::deny_with(
-            "system-disk",
-            "该设备承载系统目录；确需挂载请加 --force",
-        );
+        return Decision::deny_with("system-disk", "该设备承载系统目录；确需挂载请加 --force");
     }
     Decision::allow("ok")
 }
@@ -244,7 +241,8 @@ mod tests {
             source: "/dev/sdb1".to_string(),
             super_options: Vec::new(),
         };
-        let decision = should_automount(&device("sdb1", "exfat"), &config, &HashSet::new(), &[entry]);
+        let decision =
+            should_automount(&device("sdb1", "exfat"), &config, &HashSet::new(), &[entry]);
         assert_eq!(decision.code, "already-mounted");
     }
 

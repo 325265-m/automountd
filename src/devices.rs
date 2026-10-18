@@ -5,7 +5,7 @@
 //! number / true / false / null；字符串支持 `\" \\ \/ \b \f \n \r \t` 与
 //! `\uXXXX`（含 UTF-16 代理对）。
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
 use std::time::Duration;
 
@@ -15,7 +15,8 @@ use crate::logging;
 use crate::model::{BlockDevice, MountEntry};
 
 /// 完整列集合（较新的 util-linux）。
-pub const FULL_COLUMNS: &str = "NAME,TYPE,FSTYPE,LABEL,UUID,PARTUUID,SIZE,RM,RO,HOTPLUG,TRAN,MOUNTPOINT,MODEL,SERIAL,PKNAME";
+pub const FULL_COLUMNS: &str =
+    "NAME,TYPE,FSTYPE,LABEL,UUID,PARTUUID,SIZE,RM,RO,HOTPLUG,TRAN,MOUNTPOINT,MODEL,SERIAL,PKNAME";
 /// 兼容旧版 util-linux 的最小列集合。
 pub const MINIMAL_COLUMNS: &str = "NAME,TYPE,FSTYPE,LABEL,UUID,SIZE,RM,RO,MOUNTPOINT";
 
@@ -168,11 +169,9 @@ pub fn resolve_device(devices: &[BlockDevice], reference: &str) -> Result<BlockD
         };
 
     match matches.as_slice() {
-        [] => Err(
-            Error::device(format!("找不到设备 {reference}")).with_hint(
-                "运行 'automountd list --all' 查看当前可用的块设备；也可用 UUID= 或完整设备路径指定",
-            ),
-        ),
+        [] => Err(Error::device(format!("找不到设备 {reference}")).with_hint(
+            "运行 'automountd list --all' 查看当前可用的块设备；也可用 UUID= 或完整设备路径指定",
+        )),
         [only] => Ok((*only).clone()),
         many => {
             let candidates: Vec<String> = many
@@ -359,10 +358,7 @@ impl<'a> JsonParser<'a> {
         let value = self.parse_value(0)?;
         self.skip_ws();
         if self.pos < self.bytes.len() {
-            return Err(format!(
-                "JSON 末尾存在多余内容（偏移 {}）",
-                self.pos
-            ));
+            return Err(format!("JSON 末尾存在多余内容（偏移 {}）", self.pos));
         }
         Ok(value)
     }
@@ -395,10 +391,7 @@ impl<'a> JsonParser<'a> {
                 expected as char,
                 byte as char
             )),
-            None => Err(format!(
-                "JSON 意外结束，期望 '{}'",
-                expected as char
-            )),
+            None => Err(format!("JSON 意外结束，期望 '{}'", expected as char)),
         }
     }
 
@@ -429,10 +422,7 @@ impl<'a> JsonParser<'a> {
             .get(self.pos..end)
             .ok_or_else(|| format!("偏移 {} 处的字面量不完整", self.pos))?;
         if slice != literal.as_bytes() {
-            return Err(format!(
-                "偏移 {} 处期望字面量 {literal}",
-                self.pos
-            ));
+            return Err(format!("偏移 {} 处期望字面量 {literal}", self.pos));
         }
         self.pos = end;
         Ok(value)
@@ -542,9 +532,7 @@ impl<'a> JsonParser<'a> {
                     out.extend_from_slice(escaped.encode_utf8(&mut buffer).as_bytes());
                 }
                 byte if byte < 0x20 => {
-                    return Err(format!(
-                        "JSON 字符串中出现未转义的控制字符 0x{byte:02x}"
-                    ))
+                    return Err(format!("JSON 字符串中出现未转义的控制字符 0x{byte:02x}"))
                 }
                 byte => out.push(byte),
             }
@@ -573,8 +561,7 @@ impl<'a> JsonParser<'a> {
                         self.pos += 2;
                         if let Ok(second) = self.read_hex4() {
                             if (0xDC00..=0xDFFF).contains(&second) {
-                                let code =
-                                    0x1_0000 + ((first - 0xD800) << 10) + (second - 0xDC00);
+                                let code = 0x1_0000 + ((first - 0xD800) << 10) + (second - 0xDC00);
                                 if let Some(ch) = char::from_u32(code) {
                                     return Ok(ch);
                                 }
@@ -584,13 +571,9 @@ impl<'a> JsonParser<'a> {
                     }
                     return Err(format!("\\u{first:04X} 是孤立的 UTF-16 高代理项"));
                 }
-                char::from_u32(first)
-                    .ok_or_else(|| format!("无效的 Unicode 转义 \\u{first:04X}"))
+                char::from_u32(first).ok_or_else(|| format!("无效的 Unicode 转义 \\u{first:04X}"))
             }
-            Some(byte) => Err(format!(
-                "字符串中出现未知转义 '\\{}'",
-                byte as char
-            )),
+            Some(byte) => Err(format!("字符串中出现未知转义 '\\{}'", byte as char)),
             None => Err("字符串转义序列不完整".to_string()),
         }
     }
@@ -605,12 +588,7 @@ impl<'a> JsonParser<'a> {
                 b'0'..=b'9' => byte - b'0',
                 b'a'..=b'f' => byte - b'a' + 10,
                 b'A'..=b'F' => byte - b'A' + 10,
-                _ => {
-                    return Err(format!(
-                        "\\u 转义中出现非十六进制字符 '{}'",
-                        byte as char
-                    ))
-                }
+                _ => return Err(format!("\\u 转义中出现非十六进制字符 '{}'", byte as char)),
             };
             value = value * 16 + u32::from(digit);
         }
@@ -673,7 +651,8 @@ fn node_name(node: &Json) -> Option<String> {
 }
 
 /// 读取字符串字段；数字也转成文本，数组取第一个非空字符串。
-fn json_text(node: &Json, key: &str) -> Option<String> {    match node.get(key)? {
+fn json_text(node: &Json, key: &str) -> Option<String> {
+    match node.get(key)? {
         Json::Str(text) => {
             let trimmed = text.trim();
             if trimmed.is_empty() {
@@ -759,10 +738,7 @@ fn link_children(devices: &mut [BlockDevice]) {
         })
         .collect();
     for (parent, child) in pairs {
-        if let Some(found) = devices
-            .iter_mut()
-            .find(|device| device.name == parent)
-        {
+        if let Some(found) = devices.iter_mut().find(|device| device.name == parent) {
             if !found.children.contains(&child) {
                 found.children.push(child);
             }
@@ -776,11 +752,7 @@ fn link_children(devices: &mut [BlockDevice]) {
 
 /// 执行一次 lsblk 并解析；命令不存在、退出码非 0 或 JSON 非法时返回 None。
 fn lsblk_devices(runner: &dyn CommandRunner, columns: &str) -> Option<Vec<BlockDevice>> {
-    let output = match runner.run(
-        "lsblk",
-        &["-J", "-b", "-o", columns],
-        Some(PROBE_TIMEOUT),
-    ) {
+    let output = match runner.run("lsblk", &["-J", "-b", "-o", columns], Some(PROBE_TIMEOUT)) {
         Ok(output) => output,
         Err(err) => {
             logging::debug(format!("执行 lsblk 失败: {err}"));
@@ -889,7 +861,30 @@ fn list_sysfs(root: &Path, runner: &dyn CommandRunner) -> Vec<BlockDevice> {
         });
     }
     link_children(&mut devices);
+    inherit_parent_flags(&mut devices);
     devices
+}
+
+/// 分区的 removable/hotplug 属性在父盘上；sysfs 兜底时把它们继承下来，
+/// 否则所有分区都会被当作“内置盘”，USB 分区永远不会自动挂载。
+fn inherit_parent_flags(devices: &mut [BlockDevice]) {
+    let mut parents: HashMap<String, (bool, bool)> = HashMap::new();
+    for device in devices.iter().filter(|device| device.parent.is_none()) {
+        parents.insert(device.name.clone(), (device.removable, device.hotplug));
+    }
+    for device in devices.iter_mut() {
+        let Some(parent) = device.parent.clone() else {
+            continue;
+        };
+        if let Some((removable, hotplug)) = parents.get(&parent) {
+            if !device.removable {
+                device.removable = *removable;
+            }
+            if !device.hotplug {
+                device.hotplug = *hotplug;
+            }
+        }
+    }
 }
 
 /// 父盘名：优先取真实路径的上一级目录名，否则按名称规则推断。
@@ -1225,10 +1220,7 @@ mod tests {
         ]}"#;
         let devices = parse_lsblk(text).unwrap();
         assert_eq!(devices.len(), 1);
-        assert_eq!(
-            devices[0].label.as_deref(),
-            Some("备份盘 / \"A\"\tB")
-        );
+        assert_eq!(devices[0].label.as_deref(), Some("备份盘 / \"A\"\tB"));
         assert_eq!(devices[0].model.as_deref(), Some("Disk\\Pro"));
         assert_eq!(devices[0].serial.as_deref(), Some("😀"));
     }
@@ -1248,10 +1240,7 @@ mod tests {
             "not json",
             "{\"blockdevices\": [{\"name\":\"sda\"}]} trailing",
         ] {
-            assert!(
-                parse_lsblk(bad).is_err(),
-                "应当解析失败: {bad}"
-            );
+            assert!(parse_lsblk(bad).is_err(), "应当解析失败: {bad}");
         }
     }
 
@@ -1275,10 +1264,7 @@ mod tests {
             .iter()
             .find(|(program, _)| program == "lsblk")
             .expect("应当调用 lsblk");
-        assert_eq!(
-            lsblk_call.1,
-            vec!["-J", "-b", "-o", FULL_COLUMNS]
-        );
+        assert_eq!(lsblk_call.1, vec!["-J", "-b", "-o", FULL_COLUMNS]);
 
         // include_loop = true 时保留 loop 设备
         let runner = MockRunner::new().respond("lsblk", CommandOutput::success(json));

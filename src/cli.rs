@@ -19,8 +19,8 @@ use crate::fstypes;
 use crate::inventory;
 use crate::logging::{self, Level};
 use crate::model::{DeviceView, MountRecord, MountResult};
-use crate::mountinfo;
 use crate::mounter::MountManager;
+use crate::mountinfo;
 use crate::platform;
 use crate::policy;
 use crate::sessions;
@@ -97,9 +97,8 @@ pub fn run_with_args(args: &[String]) -> Result<i32> {
             print_version();
             Ok(0)
         }
-        other => Err(Error::config(format!("未知命令: {other}")).with_hint(
-            "运行 'automountd --help' 查看所有命令",
-        )),
+        other => Err(Error::config(format!("未知命令: {other}"))
+            .with_hint("运行 'automountd --help' 查看所有命令")),
     }
 }
 
@@ -135,7 +134,8 @@ fn parse_global(args: &[String]) -> Result<(Global, Vec<String>)> {
             "-c" | "--config" => {
                 index += 1;
                 let value = args.get(index).ok_or_else(|| {
-                    Error::config("--config 需要一个配置文件路径").with_hint("例如: --config ./config.conf")
+                    Error::config("--config 需要一个配置文件路径")
+                        .with_hint("例如: --config ./config.conf")
                 })?;
                 global.config = Some(PathBuf::from(value));
             }
@@ -186,9 +186,7 @@ fn parse_opts(args: &[String], specs: &[OptSpec]) -> Result<Parsed> {
     while index < args.len() {
         let arg = args[index].as_str();
         if arg == "--" {
-            parsed
-                .positionals
-                .extend(args[index + 1..].iter().cloned());
+            parsed.positionals.extend(args[index + 1..].iter().cloned());
             break;
         }
         if let Some(body) = arg.strip_prefix("--") {
@@ -208,9 +206,9 @@ fn parse_opts(args: &[String], specs: &[OptSpec]) -> Result<Parsed> {
                     Some(value) => value,
                     None => {
                         index += 1;
-                        args.get(index).cloned().ok_or_else(|| {
-                            Error::config(format!("--{name} 需要一个值"))
-                        })?
+                        args.get(index)
+                            .cloned()
+                            .ok_or_else(|| Error::config(format!("--{name} 需要一个值")))?
                     }
                 };
                 parsed.values.insert(name.to_string(), value);
@@ -286,23 +284,29 @@ fn cmd_status(config: &Config, tail: &[String]) -> Result<i32> {
         for (key, value) in &response.meta {
             println!("  {:<14} {}", meta_label(key), display_meta(key, value));
         }
-        println!(
-            "  {:<14} {}",
-            "控制接口",
-            config.ctl_socket.display()
-        );
+        println!("  {:<14} {}", "控制接口", config.ctl_socket.display());
         return Ok(0);
     }
 
     let state = state::read_state(config);
     println!("{}", colors.bold("automountd 状态"));
-    println!("  服务          {}（控制接口 {} 无响应）", colors.yellow("未运行"), config.ctl_socket.display());
+    println!(
+        "  服务          {}（控制接口 {} 无响应）",
+        colors.yellow("未运行"),
+        config.ctl_socket.display()
+    );
     if state.started_at > 0 {
         println!("  上次运行      pid {}", state.pid);
-        println!("  上次启动      {}", term::format_timestamp(state.started_at));
+        println!(
+            "  上次启动      {}",
+            term::format_timestamp(state.started_at)
+        );
     }
     if !state.is_empty() {
-        println!("  遗留挂载记录  {} 条（设备仍插着时服务重启会自动接管）", state.len());
+        println!(
+            "  遗留挂载记录  {} 条（设备仍插着时服务重启会自动接管）",
+            state.len()
+        );
     }
     Ok(3)
 }
@@ -397,7 +401,8 @@ fn cmd_list(config: &Config, runner: Arc<dyn CommandRunner>, tail: &[String]) ->
     Ok(0)
 }
 
-pub(crate) fn view_row(view: &DeviceView) -> Vec<String> {    vec![
+pub(crate) fn view_row(view: &DeviceView) -> Vec<String> {
+    vec![
         view.device.name.clone(),
         view.device.path.clone(),
         view.device.label.clone().unwrap_or_default(),
@@ -494,7 +499,8 @@ fn cmd_mount(config: &Config, runner: Arc<dyn CommandRunner>, tail: &[String]) -
         .ok_or_else(|| Error::config("请指定要挂载的设备，例如: automountd mount /dev/sdb1"))?;
     let read_only = opts.flag("read-only");
     let force = opts.flag("force");
-    let use_daemon = ctl::is_running(&config.ctl_socket) && !opts.flag("local");
+    // dry-run 必须留在本地执行，否则会把请求交给真正执行挂载的守护进程。
+    let use_daemon = !config.dry_run && ctl::is_running(&config.ctl_socket) && !opts.flag("local");
 
     if use_daemon {
         let response = ensure_ok(ctl::request(
@@ -503,7 +509,7 @@ fn cmd_mount(config: &Config, runner: Arc<dyn CommandRunner>, tail: &[String]) -
                 .arg(reference)
                 .arg(if read_only { "1" } else { "0" })
                 .arg(if force { "1" } else { "0" }),
-            Duration::from_secs(120),
+            Duration::from_secs(config.mount_timeout_seconds.saturating_add(30)),
         )?)?;
         let target = response.meta_value("target").unwrap_or("?");
         if response.meta_value("already_mounted") == Some("1") {
@@ -523,7 +529,11 @@ fn cmd_mount(config: &Config, runner: Arc<dyn CommandRunner>, tail: &[String]) -
     if result.already_mounted {
         println!("{} 已经挂载在 {}", reference, result.target.display());
     } else {
-        println!("已挂载 {} -> {}", result.device.path, result.target.display());
+        println!(
+            "已挂载 {} -> {}",
+            result.device.path,
+            result.target.display()
+        );
         println!("  文件系统: {}（驱动 {}）", result.fstype, result.driver);
         println!("  选项: {}", result.options.join(","));
     }
@@ -548,7 +558,10 @@ pub(crate) fn local_mount(
     let user = sessions::console_user(&*runner, config.user.as_deref());
     let mut manager = MountManager::new(config.clone(), runner);
     let result = manager.mount(&device, user.as_ref(), read_only, &[])?;
-    if !result.already_mounted {
+    if result.dry_run || result.already_mounted {
+        return Ok(result);
+    }
+    {
         let mut state = state::read_state(config);
         state.add(MountRecord {
             device: device.path.clone(),
@@ -603,7 +616,7 @@ fn cmd_umount(config: &Config, runner: Arc<dyn CommandRunner>, tail: &[String]) 
         .ok_or_else(|| Error::config("请指定要卸载的设备或挂载点"))?;
     let lazy = opts.flag("lazy");
     let eject = opts.flag("eject");
-    let use_daemon = ctl::is_running(&config.ctl_socket) && !opts.flag("local");
+    let use_daemon = !config.dry_run && ctl::is_running(&config.ctl_socket) && !opts.flag("local");
 
     if use_daemon {
         let response = ensure_ok(ctl::request(
@@ -612,9 +625,12 @@ fn cmd_umount(config: &Config, runner: Arc<dyn CommandRunner>, tail: &[String]) 
                 .arg(reference)
                 .arg(if lazy { "1" } else { "0" })
                 .arg(if eject { "1" } else { "0" }),
-            Duration::from_secs(60),
+            Duration::from_secs(config.unmount_timeout_seconds.saturating_add(30)),
         )?)?;
-        println!("已卸载 {}", response.meta_value("target").unwrap_or(reference));
+        println!(
+            "已卸载 {}",
+            response.meta_value("target").unwrap_or(reference)
+        );
         return Ok(0);
     }
 
@@ -635,12 +651,7 @@ pub(crate) fn local_umount(
     let target = if reference.starts_with('/') {
         mountinfo::find_mount(&mounts, Some(reference), None)
             .map(|entry| entry.target.clone())
-            .ok_or_else(|| {
-                Error::new(
-                    ErrorKind::NotMounted,
-                    format!("{reference} 当前没有挂载"),
-                )
-            })?
+            .ok_or_else(|| Error::new(ErrorKind::NotMounted, format!("{reference} 当前没有挂载")))?
     } else {
         let all = devices::list_devices(&*runner, false, true);
         let device = devices::resolve_device(&all, reference)?;
@@ -655,7 +666,7 @@ pub(crate) fn local_umount(
             })?
     };
 
-    if ctl::is_running(&config.ctl_socket) {
+    if ctl::is_running(&config.ctl_socket) && !config.dry_run {
         return Err(Error::permission(
             "守护进程正在运行，请去掉 --local（由服务执行卸载）",
         ));
@@ -675,6 +686,9 @@ pub(crate) fn local_umount(
     platform::require_root("卸载")?;
     let mut manager = MountManager::new(config.clone(), runner);
     let unmounted = manager.unmount(&target, lazy, eject, false)?;
+    if config.dry_run {
+        return Ok(unmounted);
+    }
 
     let mut state = state::read_state(config);
     if let Some(record) = state.find_by_target(&unmounted).cloned() {
@@ -751,11 +765,8 @@ fn cmd_config(global: &Global, tail: &[String]) -> Result<i32> {
                 .clone()
                 .unwrap_or_else(|| PathBuf::from(SYSTEM_CONFIG));
             if path.exists() && !opts.flag("force") {
-                return Err(Error::config(format!(
-                    "配置文件已存在: {}",
-                    path.display()
-                ))
-                .with_hint("如需覆盖请加 --force（会保留 .bak 备份由你自行负责）"));
+                return Err(Error::config(format!("配置文件已存在: {}", path.display()))
+                    .with_hint("如需覆盖请加 --force（会保留 .bak 备份由你自行负责）"));
             }
             let config = Config::default();
             config.save(&path)?;
@@ -857,6 +868,13 @@ fn fstab_add(config: &Config, runner: Arc<dyn CommandRunner>, tail: &[String]) -
         Some(path) => PathBuf::from(path),
         None => manager.target_path(&device, user.as_ref(), &mounts)?,
     };
+    validate_fstab_target(config, &target)?;
+
+    let system_disks = devices::system_disk_names(&all, &mounts);
+    let decision = policy::should_mount_manual(&device, config, &system_disks, false);
+    if !decision.allowed {
+        return Err(Error::mount(decision.message));
+    }
 
     let extra: Vec<String> = opts
         .value("options")
@@ -887,10 +905,7 @@ fn fstab_add(config: &Config, runner: Arc<dyn CommandRunner>, tail: &[String]) -
         fstype: fstype.clone(),
         options: std::mem::take(&mut options),
         dump: "0".to_string(),
-        passno: if matches!(
-            fstype.as_str(),
-            "ext2" | "ext3" | "ext4" | "xfs" | "btrfs"
-        ) {
+        passno: if matches!(fstype.as_str(), "ext2" | "ext3" | "ext4" | "xfs" | "btrfs") {
             "2".to_string()
         } else {
             "0".to_string()
@@ -908,9 +923,55 @@ fn fstab_add(config: &Config, runner: Arc<dyn CommandRunner>, tail: &[String]) -
     let (changed, message) = fstab::add_entry(&config.fstab_path, &entry)?;
     println!("{message}");
     if changed {
-        println!("提示: 立即挂载可执行 'sudo systemctl daemon-reload' 后重启服务，或直接插拔设备。");
+        println!(
+            "提示: 立即挂载可执行 'sudo systemctl daemon-reload' 后重启服务，或直接插拔设备。"
+        );
     }
     Ok(0)
+}
+
+fn validate_fstab_target(config: &Config, target: &std::path::Path) -> Result<()> {
+    let text = target.to_string_lossy();
+    if !target.is_absolute() && !text.starts_with('/') {
+        return Err(Error::config(format!("fstab 挂载点必须是绝对路径: {text}")));
+    }
+    if text.contains('\n') || text.contains('\r') {
+        return Err(Error::config("fstab 挂载点不能包含换行符"));
+    }
+
+    let mut parts: Vec<&str> = Vec::new();
+    for part in text.split('/') {
+        match part {
+            "" | "." => {}
+            ".." => return Err(Error::config(format!("fstab 挂载点不能包含 ..: {text}"))),
+            other => parts.push(other),
+        }
+    }
+    let normalized = format!("/{}", parts.join("/"));
+    if normalized == "/" {
+        return Err(Error::config("fstab 挂载点不能是 /"));
+    }
+
+    let root = config.mount_root.to_string_lossy();
+    let mut root_parts: Vec<&str> = Vec::new();
+    for part in root.split('/') {
+        if !part.is_empty() && part != "." {
+            root_parts.push(part);
+        }
+    }
+    let root_prefix = format!("/{}/", root_parts.join("/"));
+    let root_normalized = format!("/{}", root_parts.join("/"));
+    if normalized == root_normalized {
+        return Err(Error::config("fstab 挂载点不能等于挂载根目录本身"));
+    }
+    if !format!("{normalized}/").starts_with(&root_prefix) {
+        return Err(Error::config(format!(
+            "fstab 挂载点必须位于 mount_root（{}）之下，当前为 {normalized}",
+            config.mount_root.display()
+        ))
+        .with_hint("如需挂到其他位置，请先修改配置中的 mount_root"));
+    }
+    Ok(())
 }
 
 fn fstab_remove(config: &Config, tail: &[String]) -> Result<i32> {
@@ -923,9 +984,7 @@ fn fstab_remove(config: &Config, tail: &[String]) -> Result<i32> {
     let reference = opts.positional(0).map(str::to_string);
     let target = opts.value("target").map(str::to_string);
     if reference.is_none() && target.is_none() {
-        return Err(Error::config(
-            "请指定设备/UUID，或使用 --target <挂载点>",
-        ));
+        return Err(Error::config("请指定设备/UUID，或使用 --target <挂载点>"));
     }
 
     if config.dry_run {
@@ -940,11 +999,8 @@ fn fstab_remove(config: &Config, tail: &[String]) -> Result<i32> {
     platform::require_root("修改 fstab")?;
 
     let source = reference;
-    let (changed, message) = fstab::remove_entry(
-        &config.fstab_path,
-        source.as_deref(),
-        target.as_deref(),
-    )?;
+    let (changed, message) =
+        fstab::remove_entry(&config.fstab_path, source.as_deref(), target.as_deref())?;
     println!("{message}");
     if !changed {
         return Ok(1);
@@ -962,7 +1018,14 @@ fn cmd_doctor(config: &Config, runner: Arc<dyn CommandRunner>, tail: &[String]) 
     let mut checks: Vec<(String, bool, bool, String)> = Vec::new();
 
     for program in [
-        "lsblk", "blkid", "mount", "umount", "udevadm", "systemctl", "loginctl", "notify-send",
+        "lsblk",
+        "blkid",
+        "mount",
+        "umount",
+        "udevadm",
+        "systemctl",
+        "loginctl",
+        "notify-send",
         "runuser",
     ] {
         let present = runner.which(program);
@@ -1099,7 +1162,9 @@ fn cmd_doctor(config: &Config, runner: Arc<dyn CommandRunner>, tail: &[String]) 
     } else {
         println!(
             "{}",
-            colors.red(&format!("有 {critical_failures} 项关键检查失败，请先修复。"))
+            colors.red(&format!(
+                "有 {critical_failures} 项关键检查失败，请先修复。"
+            ))
         );
         Ok(1)
     }
@@ -1132,7 +1197,11 @@ fn kind_from_code(code: &str) -> ErrorKind {
 
 fn print_version() {
     println!("automountd {VERSION}");
-    println!("目标平台: {} / {}", std::env::consts::OS, std::env::consts::ARCH);
+    println!(
+        "目标平台: {} / {}",
+        std::env::consts::OS,
+        std::env::consts::ARCH
+    );
     println!("构建配置: 零第三方依赖（std only）");
 }
 
@@ -1169,4 +1238,27 @@ fn print_help() {
     println!("  automountd mount /dev/sdb1");
     println!("  automountd umount /media/alice/USB");
     println!("  sudo automountd fstab add UUID=1234-ABCD");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn config_with_mount_root(root: &str) -> Config {
+        let mut config = Config::default();
+        config.mount_root = PathBuf::from(root);
+        config
+    }
+
+    #[test]
+    fn fstab_target_must_be_under_mount_root() {
+        let config = config_with_mount_root("/media");
+        assert!(validate_fstab_target(&config, std::path::Path::new("/media/alice/U盘")).is_ok());
+        assert!(validate_fstab_target(&config, std::path::Path::new("/etc")).is_err());
+        assert!(validate_fstab_target(&config, std::path::Path::new("/usr")).is_err());
+        assert!(validate_fstab_target(&config, std::path::Path::new("/media/../etc")).is_err());
+        assert!(validate_fstab_target(&config, std::path::Path::new("media/USB")).is_err());
+        assert!(validate_fstab_target(&config, std::path::Path::new("/media")).is_err());
+        assert!(validate_fstab_target(&config, std::path::Path::new("/media/a\nb")).is_err());
+    }
 }

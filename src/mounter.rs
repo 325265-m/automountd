@@ -33,6 +33,8 @@ pub struct MountManager {
     dry_run: bool,
     supported: HashSet<String>,
     planned: Vec<Vec<String>>,
+    /// 本次进程中由本管理器创建的目录；卸载/失败清理只删这些，避免误删管理员预建目录。
+    created_dirs: HashSet<PathBuf>,
     /// 仅供测试注入 mountinfo（真实运行时为 None，直接读 `/proc/self/mountinfo`）。
     mounts_override: Option<Vec<MountEntry>>,
 }
@@ -56,6 +58,7 @@ impl MountManager {
             dry_run,
             supported,
             planned: Vec::new(),
+            created_dirs: HashSet::new(),
             mounts_override: None,
         }
     }
@@ -70,7 +73,8 @@ impl MountManager {
 
     /// 挂载根目录（含 per-user 子目录）。
     pub fn base_dir(&self, user: Option<&UserInfo>) -> PathBuf {
-        let mut base = self.config.mount_root.clone();
+        // 固定到真实路径，避免 mount_root 是符号链接时包含性检查与 mount 落点不一致。
+        let mut base = canonicalize_root(&self.config.mount_root);
         if self.config.per_user_dirs {
             if let Some(user) = user {
                 let fallback = format!("user{}", user.uid);
@@ -127,7 +131,9 @@ impl MountManager {
                 "设备 {} 没有可识别的文件系统，无法挂载",
                 device.path
             ))
-            .with_hint("请先格式化该设备（例如 mkfs.exfat），或用 'automountd list --all' 确认设备状态"));
+            .with_hint(
+                "请先格式化该设备（例如 mkfs.exfat），或用 'automountd list --all' 确认设备状态",
+            ));
         };
 
         let driver = fstypes::choose_driver(&fstype, &self.supported)?;
@@ -205,12 +211,31 @@ impl MountManager {
         }
 
         let base = self.base_dir(user);
+        let base_existed = base.exists();
         ensure_dir(&base)?;
+        if !base_existed {
+            self.created_dirs.insert(base.clone());
+        }
+        let target_existed = plan.target.exists();
+        naming::check_no_symlink_components(&self.config.mount_root, &plan.target)?;
         ensure_dir(&plan.target)?;
-        naming::check_no_symlink_components(&base, &plan.target)?;
+        if !target_existed {
+            self.created_dirs.insert(plan.target.clone());
+        }
 
         if let Some(user) = user {
             if fstypes::needs_ownership_fix(&plan.fstype, &self.config) {
+                match plan.target.symlink_metadata() {
+                    Ok(metadata) if !metadata.file_type().is_symlink() => {}
+                    _ => {
+                        self.cleanup_empty_dirs(&plan.target);
+                        return Err(Error::mount(format!(
+                            "挂载点 {} 在创建后变成了符号链接或不存在，已中止",
+                            plan.target.display()
+                        ))
+                        .with_hint("可能有其他进程在操作挂载目录，请检查并重试"));
+                    }
+                }
                 if let Err(err) = platform::chown(&plan.target, user.uid, user.gid) {
                     warn(format!(
                         "无法把挂载点 {} 交给 {}({}): {err}",
@@ -226,21 +251,49 @@ impl MountManager {
         let options_text = plan.options_string();
         let timeout = Duration::from_secs(self.config.mount_timeout_seconds.max(1));
         debug(format!("执行 {}", plan.describe()));
-        let args = [
-            "-t",
-            plan.driver.as_str(),
-            "-o",
-            options_text.as_str(),
-            device.path.as_str(),
-            target_text.as_str(),
-        ];
-        let output = match self.runner.run("mount", &args, Some(timeout)) {
+        let mut driver = plan.driver.clone();
+        let mut fstype = plan.fstype.clone();
+        let mut output = match self.run_mount_command(
+            &driver,
+            &options_text,
+            &device.path,
+            &target_text,
+            timeout,
+        ) {
             Ok(output) => output,
             Err(err) => {
                 self.cleanup_empty_dirs(&plan.target);
                 return Err(err);
             }
         };
+        // NTFS 的两种驱动：内核 ntfs3 可能只是未加载的模块（不在 /proc/filesystems 里），
+        // 反过来老内核也可能只装了 ntfs-3g。失败时自动换另一个驱动再试一次。
+        if !output.ok() && is_unknown_filesystem(&output.stderr) {
+            let alternative = match driver.as_str() {
+                "ntfs3" => Some("ntfs-3g"),
+                "ntfs-3g" => Some("ntfs3"),
+                _ => None,
+            };
+            if let Some(alternative) = alternative {
+                warn(format!(
+                    "使用 {driver} 挂载 {} 失败，尝试改用 {alternative}",
+                    device.path
+                ));
+                if let Ok(retry) = self.run_mount_command(
+                    alternative,
+                    &options_text,
+                    &device.path,
+                    &target_text,
+                    timeout,
+                ) {
+                    if retry.ok() {
+                        output = retry;
+                        driver = alternative.to_string();
+                        fstype = "ntfs".to_string();
+                    }
+                }
+            }
+        }
         if !output.ok() {
             self.cleanup_empty_dirs(&plan.target);
             let detail = command_detail(output.status, output.stderr_trimmed());
@@ -253,22 +306,55 @@ impl MountManager {
 
         if !self.wait_until("挂载", &target_text, MOUNT_CONFIRM_TIMEOUT, true) {
             self.cleanup_empty_dirs(&plan.target);
+            return Err(
+                Error::mount(format!("挂载命令已返回，但 {target_text} 未出现在挂载表中"))
+                    .with_hint("请用 dmesg 查看内核消息，确认设备仍然在线且文件系统正常"),
+            );
+        }
+
+        // 防御符号链接竞态：确认内核实际挂载的位置就是预期目录。
+        let expected = mountinfo::normalize_path(&target_text);
+        let actual = mountinfo::find_mount(&self.current_mounts(), Some(&target_text), None)
+            .map(|entry| mountinfo::normalize_path(&entry.target));
+        if actual.as_deref() != Some(expected.as_str()) {
+            let _ = self.runner.run(
+                "umount",
+                &[target_text.as_str()],
+                Some(Duration::from_secs(10)),
+            );
+            self.cleanup_empty_dirs(&plan.target);
             return Err(Error::mount(format!(
-                "挂载命令已返回，但 {target_text} 未出现在挂载表中"
+                "实际挂载点与预期不一致（预期 {expected}，实际 {}）",
+                actual.unwrap_or_else(|| "未知".to_string())
             ))
-            .with_hint("请用 dmesg 查看内核消息，确认设备仍然在线且文件系统正常"));
+            .with_hint("挂载目录可能在挂载过程中被替换，请检查是否有其他进程操作该路径"));
         }
 
         info(format!("已挂载 {} 到 {target_text}", device.path));
         Ok(MountResult {
             device: plan.device.clone(),
             target: plan.target.clone(),
-            fstype: plan.fstype.clone(),
-            driver: plan.driver.clone(),
+            fstype,
+            driver,
             options: plan.options.clone(),
             already_mounted: false,
             dry_run: false,
         })
+    }
+
+    fn run_mount_command(
+        &self,
+        driver: &str,
+        options: &str,
+        device: &str,
+        target: &str,
+        timeout: Duration,
+    ) -> Result<crate::exec::CommandOutput> {
+        self.runner.run(
+            "mount",
+            &["-t", driver, "-o", options, device, target],
+            Some(timeout),
+        )
     }
 
     /// 卸载指定挂载点，返回被卸载的挂载点。
@@ -285,11 +371,11 @@ impl MountManager {
 
         let mounts = self.current_mounts();
         let Some(entry) = mountinfo::find_mount(&mounts, Some(target), None) else {
-            return Err(Error::new(
-                ErrorKind::NotMounted,
-                format!("{target} 当前没有挂载"),
-            )
-            .with_hint("可用 'automountd list --all' 查看挂载状态，或检查挂载点路径是否正确"));
+            return Err(
+                Error::new(ErrorKind::NotMounted, format!("{target} 当前没有挂载")).with_hint(
+                    "可用 'automountd list --all' 查看挂载状态，或检查挂载点路径是否正确",
+                ),
+            );
         };
         let mounted_target = entry.target.clone();
         let source = entry.source.clone();
@@ -343,11 +429,24 @@ impl MountManager {
             self.cleanup_empty_dirs(Path::new(&mounted_target));
         }
 
-        if eject || self.config.eject_after_unmount {
-            self.try_optional("eject", &[source.as_str()], "弹出设备");
-        }
-        if power_off || self.config.power_off_after_unmount {
-            self.try_optional("udisksctl", &["power-off", "-b", source.as_str()], "设备断电");
+        let wants_eject = eject || self.config.eject_after_unmount;
+        let wants_power_off = power_off || self.config.power_off_after_unmount;
+        if use_lazy && (wants_eject || wants_power_off) {
+            warn(format!(
+                "{} 使用 lazy 卸载，设备可能仍被进程占用；已跳过弹出/断电以避免数据丢失",
+                mounted_target
+            ));
+        } else {
+            if wants_eject {
+                self.try_optional("eject", &[source.as_str()], "弹出设备");
+            }
+            if wants_power_off {
+                self.try_optional(
+                    "udisksctl",
+                    &["power-off", "-b", source.as_str()],
+                    "设备断电",
+                );
+            }
         }
 
         info(format!("已卸载 {mounted_target}"));
@@ -447,8 +546,8 @@ impl MountManager {
         }
     }
 
-    /// 只清理 mount_root 之下、且为空的目录（含空的 per-user 目录）。
-    fn cleanup_empty_dirs(&self, target: &Path) {
+    /// 只清理本次由本管理器创建的、位于 mount_root 之下的空目录。
+    fn cleanup_empty_dirs(&mut self, target: &Path) {
         let root = absolute_path(&self.config.mount_root)
             .unwrap_or_else(|_| self.config.mount_root.clone());
         let Ok(target_abs) = absolute_path(target) else {
@@ -457,7 +556,7 @@ impl MountManager {
         if target_abs == root || !target_abs.starts_with(&root) {
             return;
         }
-        if dir_is_empty(&target_abs) {
+        if self.created_dirs.remove(&target_abs) && dir_is_empty(&target_abs) {
             if let Err(err) = fs::remove_dir(&target_abs) {
                 debug(format!("删除空目录 {} 失败: {err}", target_abs.display()));
             }
@@ -465,7 +564,11 @@ impl MountManager {
         let Some(parent) = target_abs.parent() else {
             return;
         };
-        if parent != root && parent.starts_with(&root) && dir_is_empty(parent) {
+        if parent != root
+            && parent.starts_with(&root)
+            && self.created_dirs.remove(parent)
+            && dir_is_empty(parent)
+        {
             if let Err(err) = fs::remove_dir(parent) {
                 debug(format!("删除空目录 {} 失败: {err}", parent.display()));
             }
@@ -478,7 +581,10 @@ impl MountManager {
             warn(format!("未找到 {program}，跳过{purpose}"));
             return;
         }
-        match self.runner.run(program, args, Some(Duration::from_secs(30))) {
+        match self
+            .runner
+            .run(program, args, Some(Duration::from_secs(30)))
+        {
             Ok(output) if output.ok() => info(format!("已{purpose}（{program}）")),
             Ok(output) => warn(format!(
                 "{purpose}失败（{program} 退出码 {}）: {}",
@@ -516,10 +622,14 @@ pub fn diagnose(stderr: &str) -> Option<&'static str> {
         return Some("NTFS 卷可能残留 Windows 快速启动/休眠标志：建议在 Windows 上执行 chkdsk /f，或改用 ntfs-3g 并加 remove_hiberfile 选项");
     }
     if has("transport endpoint is not connected") {
-        return Some("FUSE 连接已断开（Transport endpoint is not connected）：请先卸载再重新挂载该设备");
+        return Some(
+            "FUSE 连接已断开（Transport endpoint is not connected）：请先卸载再重新挂载该设备",
+        );
     }
     if has("read-only") || has("readonly") {
-        return Some("文件系统处于只读状态：可能是硬件写保护、文件系统错误或挂载选项冲突，请检查 dmesg");
+        return Some(
+            "文件系统处于只读状态：可能是硬件写保护、文件系统错误或挂载选项冲突，请检查 dmesg",
+        );
     }
     if has("no such device") || has("does not exist") {
         return Some("设备节点已消失：请确认设备仍插在接口上，然后重新插拔");
@@ -547,6 +657,23 @@ fn absolute_path(path: &Path) -> Result<PathBuf> {
     Ok(cwd.join(path))
 }
 
+/// canonicalize 挂载根目录；Windows 上去掉 `\\?\` 前缀，便于与其他路径比较。
+fn canonicalize_root(path: &Path) -> PathBuf {
+    match std::fs::canonicalize(path) {
+        Ok(canonical) => {
+            #[cfg(windows)]
+            {
+                let text = canonical.to_string_lossy();
+                if let Some(stripped) = text.strip_prefix(r"\\?\") {
+                    return PathBuf::from(stripped);
+                }
+            }
+            canonical
+        }
+        Err(_) => path.to_path_buf(),
+    }
+}
+
 fn ensure_dir(path: &Path) -> Result<()> {
     fs::create_dir_all(path).map_err(|err| {
         Error::device(format!("无法创建目录 {}: {err}", path.display()))
@@ -555,9 +682,23 @@ fn ensure_dir(path: &Path) -> Result<()> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let _ = fs::set_permissions(path, fs::Permissions::from_mode(0o755));
+        // 不跟随符号链接 chmod：目录被替换成链接时保持原状，交给后续检查报错。
+        if let Ok(metadata) = fs::symlink_metadata(path) {
+            if metadata.file_type().is_dir() {
+                let _ = fs::set_permissions(path, fs::Permissions::from_mode(0o755));
+            }
+        }
     }
     Ok(())
+}
+
+/// mount(8) 报“内核不认识这个类型”时，通常意味着要换 NTFS 驱动。
+fn is_unknown_filesystem(stderr: &str) -> bool {
+    let stderr = stderr.to_ascii_lowercase();
+    stderr.contains("unknown filesystem type")
+        || stderr.contains("wrong fs type")
+        || stderr.contains("not supported")
+        || stderr.contains("no such device")
 }
 
 fn command_detail(status: i32, stderr: &str) -> String {
@@ -645,7 +786,10 @@ mod tests {
         assert!(!result.already_mounted);
         assert_eq!(result.fstype, "vfat");
         assert_eq!(result.driver, "vfat");
-        assert_eq!(result.target, dir.join("mnt").join("alice").join("USB_DISK"));
+        assert_eq!(
+            result.target,
+            dir.join("mnt").join("alice").join("USB_DISK")
+        );
 
         let planned = manager.planned_commands();
         assert_eq!(planned.len(), 1);
@@ -892,9 +1036,11 @@ mod tests {
 
     #[test]
     fn diagnoses_common_errors() {
-        assert!(diagnose("mount: /media/x: unknown filesystem type 'exfat'.")
-            .unwrap()
-            .contains("驱动"));
+        assert!(
+            diagnose("mount: /media/x: unknown filesystem type 'exfat'.")
+                .unwrap()
+                .contains("驱动")
+        );
         assert!(diagnose("mount: /media/x: wrong fs type, bad option")
             .unwrap()
             .contains("驱动"));
@@ -913,9 +1059,11 @@ mod tests {
         assert!(diagnose("mount: /media/x: read-only file system")
             .unwrap()
             .contains("只读"));
-        assert!(diagnose("ntfs3: sdb1: volume is dirty and \"force\" flag is not set")
-            .unwrap()
-            .contains("chkdsk"));
+        assert!(
+            diagnose("ntfs3: sdb1: volume is dirty and \"force\" flag is not set")
+                .unwrap()
+                .contains("chkdsk")
+        );
         assert!(diagnose("").is_none());
         assert!(diagnose("some unrelated failure").is_none());
         assert!(!is_busy("unknown filesystem type"));

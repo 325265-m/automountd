@@ -24,9 +24,13 @@ pub fn sanitize_label(label: Option<&str>, fallback: &str) -> String {
             last_underscore = true;
         }
     }
-    let trimmed: String = cleaned.trim_matches(|c| c == '.' || c == '-' || c == '_').to_string();
+    let trimmed: String = cleaned
+        .trim_matches(|c| c == '.' || c == '-' || c == '_')
+        .to_string();
     let trimmed: String = trimmed.chars().take(48).collect();
-    let trimmed = trimmed.trim_matches(|c| c == '.' || c == '-' || c == '_').to_string();
+    let trimmed = trimmed
+        .trim_matches(|c| c == '.' || c == '-' || c == '_')
+        .to_string();
     if trimmed.is_empty() || trimmed == "." || trimmed == ".." {
         fallback.to_string()
     } else {
@@ -108,32 +112,36 @@ fn canonicalize_allow_missing(path: &Path) -> Result<PathBuf> {
 }
 
 /// 检查 root 到 target 之间已存在的路径组件不是符号链接。
+///
+/// 采用词法路径（不先 canonicalize target），否则 root 自身是符号链接时
+/// `strip_prefix` 会失败，检查会被静默跳过。
 pub fn check_no_symlink_components(root: &Path, target: &Path) -> Result<()> {
-    let root_abs = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
-    let target_abs = if target.is_absolute() {
-        target.to_path_buf()
-    } else {
-        std::env::current_dir()
-            .map_err(|err| Error::device(format!("无法获取当前目录: {err}")))?
-            .join(target)
-    };
+    let root_abs = absolute_path(root)?;
+    let target_abs = absolute_path(target)?;
     let Ok(relative) = target_abs.strip_prefix(&root_abs) else {
-        return Ok(());
+        return Err(Error::device(format!(
+            "挂载点 {} 不在允许的根目录 {} 之内",
+            target.display(),
+            root.display()
+        ))
+        .with_hint("卷标可能包含可疑字符，已拒绝操作"));
     };
-    let mut current = root_abs.clone();
+    let mut current = root_abs;
     for component in relative.components() {
         match component {
             Component::Normal(part) => {
                 current.push(part);
-                if current.is_symlink() {
-                    return Err(Error::device(format!(
-                        "挂载路径中包含符号链接: {}",
-                        current.display()
-                    ))
-                    .with_hint("为避免路径劫持，请删除该链接或更换卷标"));
-                }
-                if !current.exists() {
-                    break;
+                match std::fs::symlink_metadata(&current) {
+                    Ok(metadata) if metadata.file_type().is_symlink() => {
+                        return Err(Error::device(format!(
+                            "挂载路径中包含符号链接: {}",
+                            current.display()
+                        ))
+                        .with_hint("为避免路径劫持，请删除该链接或更换卷标"));
+                    }
+                    Ok(_) => {}
+                    Err(err) if err.kind() == std::io::ErrorKind::NotFound => break,
+                    Err(_) => break,
                 }
             }
             Component::ParentDir => {
@@ -143,6 +151,15 @@ pub fn check_no_symlink_components(root: &Path, target: &Path) -> Result<()> {
         }
     }
     Ok(())
+}
+
+fn absolute_path(path: &Path) -> Result<PathBuf> {
+    if path.is_absolute() {
+        return Ok(path.to_path_buf());
+    }
+    let cwd = std::env::current_dir()
+        .map_err(|err| Error::device(format!("无法获取当前工作目录: {err}")))?;
+    Ok(cwd.join(path))
 }
 
 /// 终端显示宽度（中文等宽字符按 2 计算）。

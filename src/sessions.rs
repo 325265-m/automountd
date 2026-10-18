@@ -417,7 +417,10 @@ notanumber x y z
 ";
         let rows = parse_session_rows(text);
         assert_eq!(rows.len(), 3);
-        assert_eq!(rows[0], ("2".to_string(), "1000".to_string(), "alice".to_string()));
+        assert_eq!(
+            rows[0],
+            ("2".to_string(), "1000".to_string(), "alice".to_string())
+        );
         assert_eq!(rows[1].2, "bob");
         assert_eq!(rows[2].1, "1002");
 
@@ -436,7 +439,9 @@ notanumber x y z
         let runner = MockRunner::new()
             .respond(
                 "loginctl",
-                CommandOutput::success("  2 4242 ttyuser seat0 tty2\n  5 4242 deskuser seat0 tty5\n"),
+                CommandOutput::success(
+                    "  2 4242 ttyuser seat0 tty2\n  5 4242 deskuser seat0 tty5\n",
+                ),
             )
             .respond(
                 "loginctl",
@@ -504,10 +509,7 @@ svc:x:1002:1002::/srv:/usr/sbin/nologin
         assert_eq!(user.uid, 1000);
         // 只有 root 与 nologin 用户时没有"人"可用
         assert!(pick_human_user("root:x:0:0::/root:/bin/bash\n").is_none());
-        assert!(
-            pick_human_user("svc:x:1000:1000::/srv:/usr/sbin/nologin\n")
-                .is_none()
-        );
+        assert!(pick_human_user("svc:x:1000:1000::/srv:/usr/sbin/nologin\n").is_none());
     }
 
     #[test]

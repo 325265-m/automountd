@@ -61,10 +61,9 @@ pub fn parse_mountinfo(text: &str) -> Vec<MountEntry> {
         if left_fields.len() < 6 || right_fields.len() < 3 {
             continue;
         }
-        let (Ok(mount_id), Ok(parent_id)) = (
-            left_fields[0].parse::<u32>(),
-            left_fields[1].parse::<u32>(),
-        ) else {
+        let (Ok(mount_id), Ok(parent_id)) =
+            (left_fields[0].parse::<u32>(), left_fields[1].parse::<u32>())
+        else {
             continue;
         };
         entries.push(MountEntry {
@@ -190,7 +189,10 @@ mod tests {
         assert_eq!(entries[1].target, "/media/My Disk");
         assert_eq!(entries[1].fstype, "exfat");
         assert_eq!(entries[1].options, vec!["rw", "nosuid", "nodev"]);
-        assert!(entries[1].super_options.iter().any(|o| o == "errors=remount-ro"));
+        assert!(entries[1]
+            .super_options
+            .iter()
+            .any(|o| o == "errors=remount-ro"));
     }
 
     #[test]
