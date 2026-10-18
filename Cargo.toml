@@ -1,0 +1,29 @@
+[package]
+name = "automountd"
+version = "1.0.0"
+edition = "2021"
+rust-version = "1.74"
+description = "Linux 磁盘自动挂载守护进程：udev 热插拔、开机挂载、CLI 与交互界面（零依赖）"
+license = "MIT"
+readme = "README.md"
+keywords = ["linux", "automount", "udev", "mount", "usb"]
+categories = ["command-line-utilities", "filesystem"]
+
+[lib]
+name = "automountd"
+path = "src/lib.rs"
+
+[[bin]]
+name = "automountd"
+path = "src/main.rs"
+
+[dependencies]
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true
+panic = "abort"
+
+[profile.dev]
+panic = "unwind"
