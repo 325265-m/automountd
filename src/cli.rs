@@ -67,7 +67,15 @@ pub fn run_with_args(args: &[String]) -> Result<i32> {
         return Ok(0);
     }
 
-    let mut config = Config::load(global.config.as_deref())?;
+    // config init 要在配置文件尚不存在时工作，不能先走常规加载流程。
+    let initializing = command == "config" && tail.first().map(String::as_str) == Some("init");
+    let mut config = if initializing {
+        let mut defaults = Config::default();
+        defaults.path = global.config.clone();
+        defaults
+    } else {
+        Config::load(global.config.as_deref())?
+    };
     if global.dry_run {
         config.dry_run = true;
     }
@@ -1285,5 +1293,22 @@ mod tests {
         assert!(validate_fstab_target(&config, std::path::Path::new("media/USB")).is_err());
         assert!(validate_fstab_target(&config, std::path::Path::new("/media")).is_err());
         assert!(validate_fstab_target(&config, std::path::Path::new("/media/a\nb")).is_err());
+    }
+
+    #[test]
+    fn config_init_works_before_file_exists() {
+        let temp = crate::testutil::TempDir::new("cli-init");
+        let path = temp.join("config.conf");
+        let args = vec![
+            "--config".to_string(),
+            path.display().to_string(),
+            "config".to_string(),
+            "init".to_string(),
+        ];
+        assert_eq!(run_with_args(&args).unwrap(), 0);
+        assert!(path.is_file());
+        let config = Config::from_file(&path).unwrap();
+        assert_eq!(config.mount_root, PathBuf::from("/media"));
+        assert!(config.validate().is_ok());
     }
 }

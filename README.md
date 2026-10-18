@@ -36,7 +36,7 @@
 - **CLI + TUI**：`automountd list / mount / umount / status / doctor / tui`，输出按中英文宽度对齐。
 - **systemd 集成**：附带加固过的 unit，日志进 journald。
 
-> 状态说明：仓库包含 113 个单元测试；Linux 专属代码通过 `cargo check --target x86_64-unknown-linux-gnu` 交叉检查，
+> 状态说明：仓库包含 114 个单元测试；Linux 专属代码通过 `cargo check --target x86_64-unknown-linux-gnu` 交叉检查，
 > 但真实挂载动作需要在 Linux 实机上验证（开发机为 Windows，无法执行 mount 系统调用）。
 
 ## 安装
@@ -207,7 +207,7 @@ sudo automountd fstab remove --target /media/alice/U盘
 ## 开发与测试
 
 ```bash
-cargo test --offline          # 113 个单元测试（纯逻辑，可在非 Linux 上跑）
+cargo test --offline          # 114 个单元测试（纯逻辑，可在非 Linux 上跑）
 cargo check --all-targets     # 类型检查
 cargo clippy --all-targets    # 静态检查
 cargo build --release --offline
