@@ -37,6 +37,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.74.0
+      - uses: dtolnay/rust-toolchain@1.120.0
       - name: Check
         run: cargo check --all-targets --locked
