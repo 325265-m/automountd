@@ -1,5 +1,7 @@
 # Changelog
 
+**简体中文** | [English](CHANGELOG.en.md)
+
 本项目的所有重要变更都记录在此文件。
 
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
@@ -9,6 +11,8 @@
 
 ### Added
 
+- 新增英文版文档：`README.en.md`、`CONTRIBUTING.en.md`、`SECURITY.en.md`、`SUPPORT.en.md`、
+  `AI_USAGE.en.md`、`AGENTS.en.md`、`CHANGELOG.en.md`。
 - 在 README 与 AI_USAGE 中声明本项目由 **deepseekv4flash** 完成。
 - 新增 `AI_USAGE.md`（AI 参与范围、验证、局限与贡献者披露政策）、`AGENTS.md`（AI 编码代理规则）
   与 `.github/copilot-instructions.md`。

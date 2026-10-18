@@ -1,5 +1,7 @@
 # automountd — Linux 磁盘自动挂载守护进程
 
+**简体中文** | [English](README.en.md)
+
 [![License: GPL-3.0-or-later](https://img.shields.io/badge/license-GPL--3.0--or--later-blue.svg)](LICENSE)
 ![Rust](https://img.shields.io/badge/rust-1.74%2B-orange.svg)
 ![Platform](https://img.shields.io/badge/platform-Linux-lightgrey.svg)
@@ -263,13 +265,20 @@ examples/config.conf    示例配置
 tests/cli.rs            CLI 集成测试
 .github/                CI、发布流程、Issue/PR 模板、dependabot
 CONTRIBUTING.md         贡献指南
-CODE_OF_CONDUCT.md      行为准则
+CONTRIBUTING.en.md      Contribution guide (English)
 SECURITY.md             安全策略
+SECURITY.en.md          Security policy (English)
 SUPPORT.md              支持说明
+SUPPORT.en.md           Support notes (English)
 CHANGELOG.md            版本变更
+CHANGELOG.en.md         Changelog (English)
+CODE_OF_CONDUCT.md      行为准则
 NOTICE                  GPL 版权与授权声明
 AGENTS.md               AI 编码代理规则
+AGENTS.en.md            Rules for AI agents (English)
 AI_USAGE.md             AI 使用披露与政策
+AI_USAGE.en.md          AI usage policy (English)
+README.en.md            English README
 ```
 
 ## 已知限制
@@ -295,6 +304,7 @@ AI 产出需经过测试、静态检查与审查，不作为正确性保证；�
 - 漏洞报告（请勿公开披露）：[SECURITY.md](SECURITY.md)
 - 提问与支持：[SUPPORT.md](SUPPORT.md)
 - 版本变更：[CHANGELOG.md](CHANGELOG.md)
+- English documentation: [README.en.md](README.en.md)
 
 欢迎提交 Issue 与 Pull Request；涉及挂载、权限、路径的改动请附 Linux 实机验证结果。
 

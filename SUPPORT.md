@@ -1,5 +1,7 @@
 # 支持 / Support
 
+**简体中文** | [English](SUPPORT.en.md)
+
 ## 文档
 
 - [README.md](README.md)：安装、配置、CLI、安全设计与排障

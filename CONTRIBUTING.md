@@ -1,5 +1,7 @@
 # 贡献指南 / Contributing
 
+**简体中文** | [English](CONTRIBUTING.en.md)
+
 感谢你愿意改进 automountd。本文说明开发环境、代码结构、测试要求与提交流程。
 
 ## 行为准则

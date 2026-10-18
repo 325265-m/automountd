@@ -1,5 +1,7 @@
 # 安全策略 / Security Policy
 
+**简体中文** | [English](SECURITY.en.md)
+
 automountd 以 root 运行并处理块设备与挂载点，安全问题是首要关注项。
 
 ## 支持版本

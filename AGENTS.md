@@ -1,5 +1,7 @@
 # AGENTS.md
 
+**简体中文** | [English](AGENTS.en.md)
+
 本文件面向在本仓库工作的 AI 编码代理（Codex、Cursor、Copilot、Claude Code、DSH 等）。
 人类贡献者请阅读 [CONTRIBUTING.md](CONTRIBUTING.md)。
 
