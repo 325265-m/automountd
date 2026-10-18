@@ -30,6 +30,6 @@ pub mod ui;
 pub use app::{ctl, daemon, inventory};
 pub use core::{config, error, fstypes, model, mountinfo, naming, policy, testutil};
 pub use system::{devices, exec, fstab, mounter, notify, platform, sessions, state, udev};
-pub use ui::{cli, logging, term, tui};
+pub use ui::{cli, i18n, logging, term, tui};
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

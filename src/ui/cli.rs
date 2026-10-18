@@ -26,6 +26,7 @@ use crate::policy;
 use crate::sessions;
 use crate::state;
 use crate::term::{self, Colors};
+use crate::ui::i18n;
 
 const VERSION: &str = crate::VERSION;
 
@@ -35,9 +36,9 @@ pub fn run() -> i32 {
     match run_with_args(&args) {
         Ok(code) => code,
         Err(err) => {
-            eprintln!("错误: {err}");
+            eprintln!("{}: {err}", i18n::tr("错误", "Error"));
             if let Some(hint) = &err.hint {
-                eprintln!("提示: {hint}");
+                eprintln!("{}: {hint}", i18n::tr("提示", "Hint"));
             }
             err.exit_code()
         }
@@ -46,6 +47,8 @@ pub fn run() -> i32 {
 
 pub fn run_with_args(args: &[String]) -> Result<i32> {
     let (global, rest) = parse_global(args)?;
+    i18n::init(global.lang.as_deref());
+
     if global.help {
         print_help();
         return Ok(0);
@@ -64,6 +67,12 @@ pub fn run_with_args(args: &[String]) -> Result<i32> {
 
     if command == "help" {
         print_help();
+        return Ok(0);
+    }
+
+    // 英文界面：命令帮助走独立的英文文案，避免维护两套函数。
+    if i18n::is_en() && wants_help(tail) {
+        print_command_help_en(command);
         return Ok(0);
     }
 
@@ -118,11 +127,23 @@ pub fn run_with_args(args: &[String]) -> Result<i32> {
 #[derive(Debug, Default)]
 struct Global {
     config: Option<PathBuf>,
+    lang: Option<String>,
     verbose: u8,
     quiet: bool,
     dry_run: bool,
     help: bool,
     version: bool,
+}
+
+fn parse_lang(value: &str) -> Result<String> {
+    let normalized = value.trim().to_ascii_lowercase();
+    match normalized.as_str() {
+        "auto" => Ok("auto".to_string()),
+        "zh" | "zh-cn" | "zh_cn" | "zh-hans" => Ok("zh".to_string()),
+        "en" | "en-us" | "en_us" | "en-gb" | "en_gb" => Ok("en".to_string()),
+        other => Err(Error::config(format!("不支持的语言: {other}"))
+            .with_hint("可选值: zh, en, auto（默认读取 AUTOMOUNTD_LANG / LANG）")),
+    }
 }
 
 fn parse_global(args: &[String]) -> Result<(Global, Vec<String>)> {
@@ -143,6 +164,13 @@ fn parse_global(args: &[String]) -> Result<(Global, Vec<String>)> {
             "-q" | "--quiet" => global.quiet = true,
             "--dry-run" => global.dry_run = true,
             "-v" | "--verbose" => global.verbose = global.verbose.saturating_add(1),
+            "--lang" => {
+                index += 1;
+                let value = args.get(index).ok_or_else(|| {
+                    Error::config("--lang 需要一个值（zh 或 en）").with_hint("例如: --lang en")
+                })?;
+                global.lang = Some(parse_lang(value)?);
+            }
             "-c" | "--config" => {
                 index += 1;
                 let value = args.get(index).ok_or_else(|| {
@@ -153,6 +181,9 @@ fn parse_global(args: &[String]) -> Result<(Global, Vec<String>)> {
             }
             other if other.starts_with("--config=") => {
                 global.config = Some(PathBuf::from(&other["--config=".len()..]));
+            }
+            other if other.starts_with("--lang=") => {
+                global.lang = Some(parse_lang(&other["--lang=".len()..])?);
             }
             other => {
                 return Err(Error::config(format!("未知全局选项: {other}"))
@@ -292,38 +323,90 @@ fn cmd_status(config: &Config, tail: &[String]) -> Result<i32> {
             &CtlRequest::new("status"),
             Duration::from_secs(10),
         )?)?;
-        println!("{}", colors.bold("automountd 状态"));
+        println!(
+            "{}",
+            colors.bold(i18n::tr("automountd 状态", "automountd status"))
+        );
         for (key, value) in &response.meta {
             println!("  {:<14} {}", meta_label(key), display_meta(key, value));
         }
-        println!("  {:<14} {}", "控制接口", config.ctl_socket.display());
+        println!(
+            "  {:<14} {}",
+            i18n::tr("控制接口", "Control socket"),
+            config.ctl_socket.display()
+        );
         return Ok(0);
     }
 
     let state = state::read_state(config);
-    println!("{}", colors.bold("automountd 状态"));
     println!(
-        "  服务          {}（控制接口 {} 无响应）",
-        colors.yellow("未运行"),
-        config.ctl_socket.display()
+        "{}",
+        colors.bold(i18n::tr("automountd 状态", "automountd status"))
     );
-    if state.started_at > 0 {
-        println!("  上次运行      pid {}", state.pid);
+    if i18n::is_en() {
         println!(
-            "  上次启动      {}",
-            term::format_timestamp(state.started_at)
+            "  {:<14} {} (no response on {})",
+            "Service",
+            colors.yellow("not running"),
+            config.ctl_socket.display()
         );
-    }
-    if !state.is_empty() {
+        if state.started_at > 0 {
+            println!("  {:<14} pid {}", "Last run", state.pid);
+            println!(
+                "  {:<14} {}",
+                "Last start",
+                term::format_timestamp(state.started_at)
+            );
+        }
+        if !state.is_empty() {
+            println!(
+                "  {:<14} {} (the service will adopt them when it restarts)",
+                "Leftover mounts",
+                state.len()
+            );
+        }
+    } else {
         println!(
-            "  遗留挂载记录  {} 条（设备仍插着时服务重启会自动接管）",
-            state.len()
+            "  服务          {}（控制接口 {} 无响应）",
+            colors.yellow("未运行"),
+            config.ctl_socket.display()
         );
+        if state.started_at > 0 {
+            println!("  上次运行      pid {}", state.pid);
+            println!(
+                "  上次启动      {}",
+                term::format_timestamp(state.started_at)
+            );
+        }
+        if !state.is_empty() {
+            println!(
+                "  遗留挂载记录  {} 条（设备仍插着时服务重启会自动接管）",
+                state.len()
+            );
+        }
     }
     Ok(3)
 }
 
 fn meta_label(key: &str) -> &'static str {
+    if i18n::is_en() {
+        return match key {
+            "version" => "Version",
+            "pid" => "PID",
+            "started_at" => "Started",
+            "uptime_seconds" => "Uptime",
+            "dry_run" => "dry-run",
+            "backend" => "Event source",
+            "mount_root" => "Mount root",
+            "managed_mounts" => "Managed mounts",
+            "device_count" => "Devices",
+            "config" => "Config file",
+            "user" => "Desktop user",
+            "allowed_uuids" => "UUID allowlist",
+            "count" => "Count",
+            _ => "",
+        };
+    }
     match key {
         "version" => "版本",
         "pid" => "进程号",
@@ -361,7 +444,17 @@ fn human_duration(seconds: u64) -> String {
     let days = seconds / 86_400;
     let hours = (seconds % 86_400) / 3600;
     let minutes = (seconds % 3600) / 60;
-    if days > 0 {
+    if i18n::is_en() {
+        if days > 0 {
+            format!("{days}d {hours}h")
+        } else if hours > 0 {
+            format!("{hours}h {minutes}m")
+        } else if minutes > 0 {
+            format!("{minutes}m {}s", seconds % 60)
+        } else {
+            format!("{seconds}s")
+        }
+    } else if days > 0 {
         format!("{days} 天 {hours} 小时")
     } else if hours > 0 {
         format!("{hours} 小时 {minutes} 分")
@@ -374,8 +467,8 @@ fn human_duration(seconds: u64) -> String {
 
 fn yes_no_text(value: &str) -> String {
     match value {
-        "1" | "true" | "yes" => "是".to_string(),
-        "0" | "false" | "no" => "否".to_string(),
+        "1" | "true" | "yes" => i18n::tr("是", "yes").to_string(),
+        "0" | "false" | "no" => i18n::tr("否", "no").to_string(),
         other => other.to_string(),
     }
 }
@@ -431,10 +524,39 @@ pub(crate) fn view_row(view: &DeviceView) -> Vec<String> {
     ]
 }
 
+pub(crate) fn decision_message(code: &str, fallback: &str) -> String {
+    if !i18n::is_en() {
+        return fallback.to_string();
+    }
+    let translated = match code {
+        "no-filesystem" => {
+            "no filesystem detected (unformatted, encrypted, or just a partition table)"
+        }
+        "ignored-fstype" => "filesystem type is ignored by configuration",
+        "system-disk" => "system disk; auto-mount refused for safety",
+        "internal-disk" => "internal disk (auto_mount_internal_disks is disabled)",
+        "not-allowed" => "not in the allowed_uuids list",
+        "blocked" => "excluded by blocked_uuids / blocked_labels",
+        "not-a-data-device" => "not a mountable data device (loop/raid/lvm/etc.)",
+        "too-small" => "device is too small and was ignored",
+        "already-mounted" => "already mounted",
+        "missing-devnode" => "device node is missing",
+        "unsupported" => "filesystem is not supported by the kernel",
+        _ => return fallback.to_string(),
+    };
+    translated.to_string()
+}
+
 fn print_rows(rows: &[Vec<String>], include_all: bool) {
     let colors = Colors::auto();
     if rows.is_empty() {
-        println!("未发现设备。若刚插入磁盘，可稍等 1~2 秒再执行。");
+        println!(
+            "{}",
+            i18n::tr(
+                "未发现设备。若刚插入磁盘，可稍等 1~2 秒再执行。",
+                "No devices found. If you just plugged in a disk, wait a second and retry."
+            )
+        );
         return;
     }
     let mut table_rows = Vec::with_capacity(rows.len());
@@ -444,11 +566,11 @@ fn print_rows(rows: &[Vec<String>], include_all: bool) {
         }
         let mounted = row[5] == "1";
         let status = if mounted {
-            colors.green("已挂载")
+            colors.green(i18n::tr("已挂载", "mounted"))
         } else if row[7] == "ok" {
-            colors.cyan("可挂载")
+            colors.cyan(i18n::tr("可挂载", "mountable"))
         } else {
-            colors.dim(&term::truncate(&row[8], 26))
+            colors.dim(&term::truncate(&decision_message(&row[7], &row[8]), 26))
         };
         let mut cells = vec![
             row[0].clone(),
@@ -467,13 +589,26 @@ fn print_rows(rows: &[Vec<String>], include_all: bool) {
         }
         table_rows.push(cells);
     }
-    let mut headers = vec!["设备", "卷标", "文件系统", "容量", "状态", "挂载点"];
+    let mut headers = vec![
+        i18n::tr("设备", "Device"),
+        i18n::tr("卷标", "Label"),
+        i18n::tr("文件系统", "Filesystem"),
+        i18n::tr("容量", "Size"),
+        i18n::tr("状态", "Status"),
+        i18n::tr("挂载点", "Mount point"),
+    ];
     if include_all {
-        headers.insert(1, "路径");
+        headers.insert(1, i18n::tr("路径", "Path"));
     }
     print!("{}", term::table(&headers, &table_rows));
     if !include_all {
-        println!("提示: 使用 --all 可查看未格式化、已加密或被策略排除的设备。");
+        println!(
+            "{}",
+            i18n::tr(
+                "提示: 使用 --all 可查看未格式化、已加密或被策略排除的设备。",
+                "Tip: use --all to show unformatted, encrypted, or policy-excluded devices."
+            )
+        );
     }
 }
 
@@ -506,9 +641,12 @@ fn cmd_mount(config: &Config, runner: Arc<dyn CommandRunner>, tail: &[String]) -
         },
     ];
     let opts = parse_opts(tail, &specs)?;
-    let reference = opts
-        .positional(0)
-        .ok_or_else(|| Error::config("请指定要挂载的设备，例如: automountd mount /dev/sdb1"))?;
+    let reference = opts.positional(0).ok_or_else(|| {
+        Error::config(i18n::tr(
+            "请指定要挂载的设备，例如: automountd mount /dev/sdb1",
+            "Specify a device to mount, e.g. automountd mount /dev/sdb1",
+        ))
+    })?;
     let read_only = opts.flag("read-only");
     let force = opts.flag("force");
     // dry-run 必须留在本地执行，否则会把请求交给真正执行挂载的守护进程。
@@ -525,35 +663,62 @@ fn cmd_mount(config: &Config, runner: Arc<dyn CommandRunner>, tail: &[String]) -
         )?)?;
         let target = response.meta_value("target").unwrap_or("?");
         if response.meta_value("already_mounted") == Some("1") {
-            println!("{reference} 已经挂载在 {target}");
+            println!(
+                "{} {reference} -> {target}",
+                i18n::tr("已经挂载:", "Already mounted:")
+            );
         } else if response.meta_value("dry_run") == Some("1") {
-            println!("dry-run：将把 {reference} 挂载到 {target}");
+            println!(
+                "{} {reference} -> {target}",
+                i18n::tr("dry-run：将挂载", "dry-run: would mount")
+            );
         } else {
-            println!("已挂载 {reference} -> {target}");
+            println!("{} {reference} -> {target}", i18n::tr("已挂载", "Mounted"));
         }
         return Ok(0);
     }
 
     if config.dry_run {
-        println!("提示: dry-run 模式，只打印命令");
+        println!(
+            "{}",
+            i18n::tr(
+                "提示: dry-run 模式，只打印命令",
+                "Tip: dry-run mode, commands are only printed"
+            )
+        );
     }
     let result = local_mount(config, runner, reference, read_only, force)?;
     if result.already_mounted {
-        println!("{} 已经挂载在 {}", reference, result.target.display());
+        println!(
+            "{} {reference} -> {}",
+            i18n::tr("已经挂载:", "Already mounted:"),
+            result.target.display()
+        );
     } else if result.dry_run {
         println!(
-            "dry-run：将把 {} 挂载到 {}（未执行）",
+            "{} {} -> {}",
+            i18n::tr("dry-run：将挂载", "dry-run: would mount"),
             result.device.path,
             result.target.display()
         );
     } else {
         println!(
-            "已挂载 {} -> {}",
+            "{} {} -> {}",
+            i18n::tr("已挂载", "Mounted"),
             result.device.path,
             result.target.display()
         );
-        println!("  文件系统: {}（驱动 {}）", result.fstype, result.driver);
-        println!("  选项: {}", result.options.join(","));
+        println!(
+            "  {}: {} ({})",
+            i18n::tr("文件系统", "Filesystem"),
+            result.fstype,
+            result.driver
+        );
+        println!(
+            "  {}: {}",
+            i18n::tr("选项", "Options"),
+            result.options.join(",")
+        );
     }
     Ok(0)
 }
@@ -629,9 +794,12 @@ fn cmd_umount(config: &Config, runner: Arc<dyn CommandRunner>, tail: &[String]) 
         },
     ];
     let opts = parse_opts(tail, &specs)?;
-    let reference = opts
-        .positional(0)
-        .ok_or_else(|| Error::config("请指定要卸载的设备或挂载点"))?;
+    let reference = opts.positional(0).ok_or_else(|| {
+        Error::config(i18n::tr(
+            "请指定要卸载的设备或挂载点",
+            "Specify a device or mount point to unmount",
+        ))
+    })?;
     let lazy = opts.flag("lazy");
     let eject = opts.flag("eject");
     let use_daemon = !config.dry_run && ctl::is_running(&config.ctl_socket) && !opts.flag("local");
@@ -651,14 +819,15 @@ fn cmd_umount(config: &Config, runner: Arc<dyn CommandRunner>, tail: &[String]) 
             ),
         )?)?;
         println!(
-            "已卸载 {}",
+            "{} {}",
+            i18n::tr("已卸载", "Unmounted"),
             response.meta_value("target").unwrap_or(reference)
         );
         return Ok(0);
     }
 
     let target = local_umount(config, runner, reference, lazy, eject)?;
-    println!("已卸载 {target}");
+    println!("{} {target}", i18n::tr("已卸载", "Unmounted"));
     Ok(0)
 }
 
@@ -732,12 +901,24 @@ fn cmd_reload(config: &Config, tail: &[String]) -> Result<i32> {
         return Ok(0);
     }
     if config.dry_run {
-        println!("dry-run：将重新加载配置（未联系守护进程）");
+        println!(
+            "{}",
+            i18n::tr(
+                "dry-run：将重新加载配置（未联系守护进程）",
+                "dry-run: would reload configuration (daemon not contacted)"
+            )
+        );
         return Ok(0);
     }
     if !ctl::is_running(&config.ctl_socket) {
-        return Err(Error::new(ErrorKind::NotRunning, "自动挂载服务未运行")
-            .with_hint("请先启动: sudo systemctl start automountd"));
+        return Err(Error::new(
+            ErrorKind::NotRunning,
+            i18n::tr("自动挂载服务未运行", "automountd service is not running"),
+        )
+        .with_hint(i18n::tr(
+            "请先启动: sudo systemctl start automountd",
+            "Start it first: sudo systemctl start automountd",
+        )));
     }
     let timeout = config
         .mount_timeout_seconds
@@ -748,12 +929,24 @@ fn cmd_reload(config: &Config, tail: &[String]) -> Result<i32> {
         &CtlRequest::new("reload"),
         Duration::from_secs(timeout),
     )?)?;
-    println!("配置已重新加载");
+    println!("{}", i18n::tr("配置已重新加载", "Configuration reloaded"));
     if response.meta_value("socket_changed") == Some("1") {
-        println!("提示: ctl_socket 已改变，需要重启服务才能生效");
+        println!(
+            "{}",
+            i18n::tr(
+                "提示: ctl_socket 已改变，需要重启服务才能生效",
+                "Note: ctl_socket changed; restart the service to apply it"
+            )
+        );
     }
     if response.meta_value("mount_root_changed") == Some("1") {
-        println!("提示: mount_root 已改变，新挂载将使用新目录");
+        println!(
+            "{}",
+            i18n::tr(
+                "提示: mount_root 已改变，新挂载将使用新目录",
+                "Note: mount_root changed; new mounts will use the new directory"
+            )
+        );
     }
     Ok(0)
 }
@@ -780,8 +973,14 @@ fn cmd_config(global: &Global, tail: &[String]) -> Result<i32> {
             match &config.path {
                 Some(path) => println!("{}", path.display()),
                 None => {
-                    println!("(未找到配置文件，使用默认值)");
-                    println!("默认路径: {SYSTEM_CONFIG}");
+                    println!(
+                        "{}",
+                        i18n::tr(
+                            "(未找到配置文件，使用默认值)",
+                            "(no config file found; using defaults)"
+                        )
+                    );
+                    println!("{}: {SYSTEM_CONFIG}", i18n::tr("默认路径", "Default path"));
                 }
             }
             Ok(0)
@@ -798,21 +997,38 @@ fn cmd_config(global: &Global, tail: &[String]) -> Result<i32> {
                 .clone()
                 .unwrap_or_else(|| PathBuf::from(SYSTEM_CONFIG));
             if path.exists() && !opts.flag("force") {
-                return Err(Error::config(format!("配置文件已存在: {}", path.display()))
-                    .with_hint("如需覆盖请加 --force（会保留 .bak 备份由你自行负责）"));
+                return Err(Error::config(format!(
+                    "{}: {}",
+                    i18n::tr("配置文件已存在", "configuration file already exists"),
+                    path.display()
+                ))
+                .with_hint(i18n::tr(
+                    "如需覆盖请加 --force（会保留 .bak 备份由你自行负责）",
+                    "Use --force to overwrite (you are responsible for any backup)",
+                )));
             }
             let config = Config::default();
             config.save(&path)?;
-            println!("已写入默认配置: {}", path.display());
-            println!("修改后执行: sudo systemctl restart automountd");
+            println!(
+                "{}: {}",
+                i18n::tr("已写入默认配置", "Wrote default configuration"),
+                path.display()
+            );
+            println!(
+                "{}",
+                i18n::tr(
+                    "修改后执行: sudo systemctl restart automountd",
+                    "After editing: sudo systemctl restart automountd"
+                )
+            );
             Ok(0)
         }
         "validate" => {
             let config = Config::load(global.config.as_deref())?;
             config.validate()?;
-            println!("配置有效");
+            println!("{}", i18n::tr("配置有效", "Configuration is valid"));
             if let Some(path) = &config.path {
-                println!("  文件: {}", path.display());
+                println!("  {}: {}", i18n::tr("文件", "File"), path.display());
             }
             Ok(0)
         }
@@ -834,7 +1050,11 @@ fn cmd_fstab(config: &Config, runner: Arc<dyn CommandRunner>, tail: &[String]) -
         "list" => {
             let entries = fstab::load_fstab(&config.fstab_path)?;
             if entries.is_empty() {
-                println!("{} 中没有有效记录", config.fstab_path.display());
+                println!(
+                    "{}: {}",
+                    config.fstab_path.display(),
+                    i18n::tr("中没有有效记录", "has no valid entries")
+                );
                 return Ok(0);
             }
             let rows: Vec<Vec<String>> = entries
@@ -850,13 +1070,24 @@ fn cmd_fstab(config: &Config, runner: Arc<dyn CommandRunner>, tail: &[String]) -
                 .collect();
             print!(
                 "{}",
-                term::table(&["设备", "挂载点", "文件系统", "选项"], &rows)
+                term::table(
+                    &[
+                        i18n::tr("设备", "Device"),
+                        i18n::tr("挂载点", "Mount point"),
+                        i18n::tr("文件系统", "Filesystem"),
+                        i18n::tr("选项", "Options"),
+                    ],
+                    &rows
+                )
             );
             Ok(0)
         }
         "add" => fstab_add(config, runner, &tail[1..]),
         "remove" => fstab_remove(config, &tail[1..]),
-        other => Err(Error::config(format!("未知 fstab 子命令: {other}"))),
+        other => Err(Error::config(format!(
+            "{}: {other}",
+            i18n::tr("未知 fstab 子命令", "unknown fstab subcommand")
+        ))),
     }
 }
 
@@ -879,11 +1110,17 @@ fn fstab_add(config: &Config, runner: Arc<dyn CommandRunner>, tail: &[String]) -
         },
     ];
     let opts = parse_opts(tail, &specs)?;
-    let reference = opts
-        .positional(0)
-        .ok_or_else(|| Error::config("请指定要持久化的设备"))?;
+    let reference = opts.positional(0).ok_or_else(|| {
+        Error::config(i18n::tr(
+            "请指定要持久化的设备",
+            "Specify a device to persist",
+        ))
+    })?;
     if !config.persist_enabled {
-        return Err(Error::config("persist_enabled = false，已禁止写入 fstab"));
+        return Err(Error::config(i18n::tr(
+            "persist_enabled = false，已禁止写入 fstab",
+            "persist_enabled = false; writing fstab is disabled",
+        )));
     }
 
     let all = devices::list_devices(&*runner, false, true);
@@ -948,16 +1185,36 @@ fn fstab_add(config: &Config, runner: Arc<dyn CommandRunner>, tail: &[String]) -
     };
 
     if config.dry_run {
-        println!("dry-run：将向 {} 写入:", config.fstab_path.display());
+        println!(
+            "{}: {}",
+            i18n::tr("dry-run：将写入", "dry-run: would write to"),
+            config.fstab_path.display()
+        );
         println!("  {}", entry.to_line());
         return Ok(0);
     }
     platform::require_root("写入 fstab")?;
     let (changed, message) = fstab::add_entry(&config.fstab_path, &entry)?;
-    println!("{message}");
+    if i18n::is_en() {
+        println!(
+            "{}: {}",
+            if changed {
+                "fstab updated"
+            } else {
+                "fstab unchanged"
+            },
+            config.fstab_path.display()
+        );
+    } else {
+        println!("{message}");
+    }
     if changed {
         println!(
-            "提示: 立即挂载可执行 'sudo systemctl daemon-reload' 后重启服务，或直接插拔设备。"
+            "{}",
+            i18n::tr(
+                "提示: 立即挂载可执行 'sudo systemctl daemon-reload' 后重启服务，或直接插拔设备。",
+                "Tip: run 'sudo systemctl daemon-reload' and restart the service, or replug the device."
+            )
         );
     }
     Ok(0)
@@ -1017,12 +1274,16 @@ fn fstab_remove(config: &Config, tail: &[String]) -> Result<i32> {
     let reference = opts.positional(0).map(str::to_string);
     let target = opts.value("target").map(str::to_string);
     if reference.is_none() && target.is_none() {
-        return Err(Error::config("请指定设备/UUID，或使用 --target <挂载点>"));
+        return Err(Error::config(i18n::tr(
+            "请指定设备/UUID，或使用 --target <挂载点>",
+            "Specify a device/UUID, or use --target <mountpoint>",
+        )));
     }
 
     if config.dry_run {
         println!(
-            "dry-run：将从 {} 删除 source={:?} target={:?}",
+            "{}: {} source={:?} target={:?}",
+            i18n::tr("dry-run：将从", "dry-run: would remove from"),
             config.fstab_path.display(),
             reference,
             target
@@ -1034,7 +1295,19 @@ fn fstab_remove(config: &Config, tail: &[String]) -> Result<i32> {
     let source = reference;
     let (changed, message) =
         fstab::remove_entry(&config.fstab_path, source.as_deref(), target.as_deref())?;
-    println!("{message}");
+    if i18n::is_en() {
+        println!(
+            "{}: {}",
+            if changed {
+                "fstab updated"
+            } else {
+                "no matching fstab entry"
+            },
+            config.fstab_path.display()
+        );
+    } else {
+        println!("{message}");
+    }
     if !changed {
         return Ok(1);
     }
@@ -1064,15 +1337,19 @@ fn cmd_doctor(config: &Config, runner: Arc<dyn CommandRunner>, tail: &[String]) 
         let present = runner.which(program);
         let critical = matches!(program, "lsblk" | "mount" | "umount");
         checks.push((
-            format!("命令 {program}"),
+            format!("{} {program}", i18n::tr("命令", "Command")),
             present,
             critical,
             if present {
-                "已找到".to_string()
+                i18n::tr("已找到", "found").to_string()
             } else if critical {
-                "缺失，自动挂载无法工作".to_string()
+                i18n::tr(
+                    "缺失，自动挂载无法工作",
+                    "missing; auto-mounting cannot work",
+                )
+                .to_string()
             } else {
-                "缺失（相关功能降级）".to_string()
+                i18n::tr("缺失（相关功能降级）", "missing (feature degraded)").to_string()
             },
         ));
     }
@@ -1080,37 +1357,64 @@ fn cmd_doctor(config: &Config, runner: Arc<dyn CommandRunner>, tail: &[String]) 
     let filesystems = fstypes::read_proc_filesystems();
     if filesystems.is_empty() {
         checks.push((
-            "文件系统".to_string(),
+            i18n::tr("文件系统", "Filesystems").to_string(),
             false,
             false,
-            "无法读取 /proc/filesystems（非 Linux 环境或权限受限）".to_string(),
+            i18n::tr(
+                "无法读取 /proc/filesystems（非 Linux 环境或权限受限）",
+                "cannot read /proc/filesystems (non-Linux or permission denied)",
+            )
+            .to_string(),
         ));
     } else {
         for fstype in ["ext4", "vfat", "exfat", "ntfs3"] {
             let supported = filesystems.contains(fstype);
             let detail = if supported {
-                "内核支持".to_string()
+                i18n::tr("内核支持", "supported by the kernel").to_string()
             } else if fstype == "ntfs3" {
-                "内核不支持 ntfs3；可安装 ntfs-3g（mount 会自动降级）".to_string()
+                i18n::tr(
+                    "内核不支持 ntfs3；可安装 ntfs-3g（mount 会自动降级）",
+                    "kernel lacks ntfs3; install ntfs-3g (mount falls back automatically)",
+                )
+                .to_string()
             } else if fstype == "exfat" {
-                "内核不支持 exfat；可安装 exfatprogs 或升级内核到 5.7+".to_string()
+                i18n::tr(
+                    "内核不支持 exfat；可安装 exfatprogs 或升级内核到 5.7+",
+                    "kernel lacks exfat; install exfatprogs or use kernel 5.7+",
+                )
+                .to_string()
             } else {
-                "内核不支持（若需要请安装对应驱动）".to_string()
+                i18n::tr(
+                    "内核不支持（若需要请安装对应驱动）",
+                    "not supported (install the matching driver if needed)",
+                )
+                .to_string()
             };
-            checks.push((format!("文件系统 {fstype}"), supported, false, detail));
+            checks.push((
+                format!("{} {fstype}", i18n::tr("文件系统", "Filesystem")),
+                supported,
+                false,
+                detail,
+            ));
         }
     }
 
     let config_ok = config.validate().is_ok();
     checks.push((
-        "配置".to_string(),
+        i18n::tr("配置", "Configuration").to_string(),
         config_ok,
         true,
         config
             .path
             .as_ref()
             .map(|path| path.display().to_string())
-            .unwrap_or_else(|| "使用默认值（未找到配置文件）".to_string()),
+            .unwrap_or_else(|| {
+                i18n::tr(
+                    "使用默认值（未找到配置文件）",
+                    "using defaults (no config file found)",
+                )
+                .to_string()
+            }),
     ));
 
     let state_dir = &config.state_dir;
@@ -1120,7 +1424,7 @@ fn cmd_doctor(config: &Config, runner: Arc<dyn CommandRunner>, tail: &[String]) 
             .map(|parent| parent.is_dir())
             .unwrap_or(false);
     checks.push((
-        "状态目录".to_string(),
+        i18n::tr("状态目录", "State directory").to_string(),
         state_ok,
         false,
         state_dir.display().to_string(),
@@ -1133,7 +1437,7 @@ fn cmd_doctor(config: &Config, runner: Arc<dyn CommandRunner>, tail: &[String]) 
             .map(|parent| parent.is_dir())
             .unwrap_or(false);
     checks.push((
-        "挂载根目录".to_string(),
+        i18n::tr("挂载根目录", "Mount root").to_string(),
         root_ok,
         true,
         config.mount_root.display().to_string(),
@@ -1148,22 +1452,35 @@ fn cmd_doctor(config: &Config, runner: Arc<dyn CommandRunner>, tail: &[String]) 
         .iter()
         .any(|path| std::path::Path::new(path).is_file());
     checks.push((
-        "systemd 服务".to_string(),
+        i18n::tr("systemd 服务", "systemd service").to_string(),
         service_installed,
         false,
         if service_installed {
-            "已安装 automountd.service".to_string()
+            i18n::tr(
+                "已安装 automountd.service",
+                "automountd.service is installed",
+            )
+            .to_string()
         } else {
-            "未安装；可运行 packaging/install.sh".to_string()
+            i18n::tr(
+                "未安装；可运行 packaging/install.sh",
+                "not installed; run packaging/install.sh",
+            )
+            .to_string()
         },
     ));
 
     checks.push((
-        "运行身份".to_string(),
+        i18n::tr("运行身份", "Running as").to_string(),
         true,
         false,
         if platform::is_root() {
-            "root（可以执行挂载）".to_string()
+            i18n::tr("root（可以执行挂载）", "root (can mount)").to_string()
+        } else if i18n::is_en() {
+            format!(
+                "uid {} (mounting/unmounting needs root or the daemon)",
+                platform::euid()
+            )
         } else {
             format!(
                 "uid {}（挂载/卸载需要 root 或通过服务执行）",
@@ -1187,17 +1504,31 @@ fn cmd_doctor(config: &Config, runner: Arc<dyn CommandRunner>, tail: &[String]) 
         };
         rows.push(vec![mark, name, detail]);
     }
-    print!("{}", term::table(&["", "检查项", "说明"], &rows));
+    print!(
+        "{}",
+        term::table(
+            &["", i18n::tr("检查项", "Check"), i18n::tr("说明", "Details")],
+            &rows
+        )
+    );
 
     if critical_failures == 0 {
-        println!("{}", colors.green("关键检查全部通过。"));
+        println!(
+            "{}",
+            colors.green(i18n::tr(
+                "关键检查全部通过。",
+                "All critical checks passed."
+            ))
+        );
         Ok(0)
     } else {
         println!(
             "{}",
-            colors.red(&format!(
-                "有 {critical_failures} 项关键检查失败，请先修复。"
-            ))
+            colors.red(&if i18n::is_en() {
+                format!("{critical_failures} critical check(s) failed; fix them first.")
+            } else {
+                format!("有 {critical_failures} 项关键检查失败，请先修复。")
+            })
         );
         Ok(1)
     }
@@ -1230,15 +1561,28 @@ fn kind_from_code(code: &str) -> ErrorKind {
 
 fn print_version() {
     println!("automountd {VERSION}");
-    println!(
-        "目标平台: {} / {}",
-        std::env::consts::OS,
-        std::env::consts::ARCH
-    );
-    println!("依赖配置: 当前无第三方运行时依赖");
+    if i18n::is_en() {
+        println!(
+            "Target: {} / {}",
+            std::env::consts::OS,
+            std::env::consts::ARCH
+        );
+        println!("Dependencies: no third-party runtime dependencies at the moment");
+    } else {
+        println!(
+            "目标平台: {} / {}",
+            std::env::consts::OS,
+            std::env::consts::ARCH
+        );
+        println!("依赖配置: 当前无第三方运行时依赖");
+    }
 }
 
 fn print_help() {
+    if i18n::is_en() {
+        print_help_en();
+        return;
+    }
     println!("automountd {VERSION} — Linux 磁盘自动挂载守护进程");
     println!();
     println!("用法: automountd [全局选项] <命令> [参数...]");
@@ -1259,6 +1603,7 @@ fn print_help() {
     println!();
     println!("全局选项:");
     println!("  -c, --config <路径>    指定配置文件");
+    println!("      --lang <zh|en>     界面语言（默认读取 AUTOMOUNTD_LANG / LANG）");
     println!("  -v, --verbose          输出调试日志（可重复）");
     println!("  -q, --quiet            安静模式");
     println!("      --dry-run          只打印将要执行的命令");
@@ -1271,6 +1616,114 @@ fn print_help() {
     println!("  automountd mount /dev/sdb1");
     println!("  automountd umount /media/alice/USB");
     println!("  sudo automountd fstab add UUID=1234-ABCD");
+}
+
+fn print_help_en() {
+    println!("automountd {VERSION} — Linux disk auto-mount daemon");
+    println!();
+    println!("Usage: automountd [global options] <command> [args...]");
+    println!();
+    println!("Commands:");
+    println!("  daemon                 Run the daemon in the foreground (normally by systemd)");
+    println!("  status                 Show service status");
+    println!("  list, ls               List block devices (--all shows everything)");
+    println!("  mount, m               Mount a device (--read-only / --force / --local)");
+    println!("  umount, unmount, u     Unmount a device (--lazy / --eject / --local)");
+    println!("  reload                 Reload configuration");
+    println!("  fstab list|add|remove  Persist boot-time mounts to /etc/fstab");
+    println!("  config show|path|init|validate  Configuration management");
+    println!("  doctor                 Environment self-check");
+    println!("  tui                    Interactive UI");
+    println!("  version                Version information");
+    println!("  help                   This help");
+    println!();
+    println!("Global options:");
+    println!("  -c, --config <path>    Config file");
+    println!("      --lang <zh|en>     UI language (default: auto from AUTOMOUNTD_LANG / LANG)");
+    println!("  -v, --verbose          Debug logging (repeatable)");
+    println!("  -q, --quiet            Quiet mode");
+    println!("      --dry-run          Print commands without executing them");
+    println!("  -V, --version          Show version");
+    println!("  -h, --help             Show help");
+    println!();
+    println!("Examples:");
+    println!("  sudo systemctl start automountd");
+    println!("  automountd list --all");
+    println!("  automountd mount /dev/sdb1");
+    println!("  automountd umount /media/alice/USB");
+    println!("  sudo automountd fstab add UUID=1234-ABCD");
+}
+
+fn print_command_help_en(command: &str) {
+    match command {
+        "daemon" => {
+            println!("Usage: sudo automountd daemon [--dry-run]");
+            println!();
+            println!("Run the auto-mount daemon in the foreground (normally started by systemd).");
+        }
+        "status" => {
+            println!("Usage: automountd status");
+            println!();
+            println!("Show service status, uptime, managed mounts, and connected devices.");
+        }
+        "list" | "ls" => {
+            println!("Usage: automountd list [--all]");
+            println!();
+            println!("  -a, --all   Include unformatted, encrypted, and policy-excluded devices.");
+        }
+        "mount" | "m" => {
+            println!("Usage: automountd mount <device|UUID|label> [options]");
+            println!();
+            println!("Options:");
+            println!("  -r, --read-only  Mount read-only");
+            println!("  -f, --force      Skip system-disk/ignored-filesystem checks (root only)");
+            println!("      --local      Bypass the daemon and mount directly (requires root)");
+        }
+        "umount" | "unmount" | "u" => {
+            println!("Usage: automountd umount <device|mountpoint> [options]");
+            println!();
+            println!("Options:");
+            println!("  -l, --lazy   Use umount -l when the target is busy");
+            println!("  -e, --eject  Eject the device after unmounting");
+            println!("      --local  Bypass the daemon and unmount directly (requires root)");
+        }
+        "reload" => {
+            println!("Usage: automountd reload");
+            println!();
+            println!("Reload the configuration and trigger a background device scan.");
+        }
+        "config" => {
+            println!("Usage: automountd config <show|path|init|validate>");
+            println!();
+            println!("  show      Print the effective configuration");
+            println!("  path      Print the configuration file path");
+            println!("  init      Write a default configuration (--force to overwrite)");
+            println!("  validate  Validate the configuration file");
+        }
+        "fstab" => {
+            println!("Usage: automountd fstab <list|add|remove>");
+            println!();
+            println!("  list                                    List /etc/fstab entries");
+            println!("  add <device|UUID|label> [--target DIR]  Persist a boot-time mount");
+            println!("  remove <device|UUID|label> [--target DIR]  Remove an entry");
+        }
+        "doctor" | "check" => {
+            println!("Usage: automountd doctor");
+            println!();
+            println!("Check required commands, filesystems, paths, and service installation.");
+        }
+        "tui" | "ui" => {
+            println!("Usage: automountd tui");
+            println!();
+            println!("Open the interactive terminal UI.");
+        }
+        "version" => {
+            println!("Usage: automountd version");
+            println!();
+            println!("Print version, target platform, and dependency information.");
+        }
+        _ => print_help_en(),
+    }
 }
 
 #[cfg(test)]

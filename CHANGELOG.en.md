@@ -11,6 +11,8 @@ and this project follows [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- Runtime Chinese/English UI: global `--lang zh|en`, automatic detection from
+  `AUTOMOUNTD_LANG` / `LANG`, covering help, TUI, list/status, doctor, and main CLI output.
 - English issue forms (bug / feature) and a bilingual pull-request template.
 - English documentation: `README.en.md`, `CONTRIBUTING.en.md`, `SECURITY.en.md`, `SUPPORT.en.md`,
   `AI_USAGE.en.md`, `AGENTS.en.md`, and `CHANGELOG.en.md`.

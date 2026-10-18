@@ -88,6 +88,7 @@ src/app/ctl.rs          Unix socket protocol, server, client
 src/app/inventory.rs    device view snapshots
 src/ui/cli.rs           argument parsing and subcommands
 src/ui/tui.rs           interactive UI
+src/ui/i18n.rs          Chinese/English UI strings
 src/ui/term.rs          tables/colors/time formatting
 src/ui/logging.rs       logging
 ```

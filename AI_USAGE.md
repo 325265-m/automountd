@@ -53,7 +53,7 @@ cargo check --all-targets --target x86_64-unknown-linux-gnu
 cargo build --release
 ```
 
-当前结果：**114 个单元测试 + 4 个 CLI 集成测试通过**，`clippy` 无警告，Linux target 交叉检查通过。
+当前结果：**116 个单元测试 + 6 个 CLI 集成测试通过**，`clippy` 无警告，Linux target 交叉检查通过。
 
 ## AI 参与范围
 

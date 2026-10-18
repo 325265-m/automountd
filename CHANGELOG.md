@@ -11,6 +11,8 @@
 
 ### Added
 
+- 新增运行时中英文界面：全局 `--lang zh|en`、`AUTOMOUNTD_LANG` / `LANG` 自动检测，
+  覆盖帮助、TUI、列表/状态、doctor 与主要 CLI 输出。
 - 新增英文 Issue 表单（Bug / Feature）与中英双语 Pull Request 模板。
 - 新增英文版文档：`README.en.md`、`CONTRIBUTING.en.md`、`SECURITY.en.md`、`SUPPORT.en.md`、
   `AI_USAGE.en.md`、`AGENTS.en.md`、`CHANGELOG.en.md`。

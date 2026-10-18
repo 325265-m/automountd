@@ -86,6 +86,7 @@ src/app/ctl.rs          Unix socket 协议、服务端、客户端
 src/app/inventory.rs    设备视图快照
 src/ui/cli.rs           参数解析与子命令
 src/ui/tui.rs           交互式界面
+src/ui/i18n.rs          中英文界面文案
 src/ui/term.rs          表格/颜色/时间格式化
 src/ui/logging.rs       日志
 ```

@@ -55,7 +55,7 @@ is a design choice, not a restriction.
   CJK and Latin widths.
 - **systemd integration**: ships a hardened unit and logs to journald.
 
-> Status: 114 unit tests + 4 CLI integration tests. Linux-only code is cross-checked with
+> Status: 116 unit tests + 6 CLI integration tests. Linux-only code is cross-checked with
 > `cargo check --target x86_64-unknown-linux-gnu`; real mount operations still need validation on a
 > Linux machine (the development host is Windows and cannot execute mount syscalls).
 
@@ -136,6 +136,20 @@ automountd doctor
  [2]  sdc1   Backup   ext4    1.8 TiB   mounted    /media/alice/Backup
 Command (m <n> mount, u <n> unmount, r refresh, a all, q quit):
 ```
+
+### UI language
+
+The CLI/TUI supports Chinese and English. It follows `LANG` / `AUTOMOUNTD_LANG` by default, and the
+global `--lang` option can force a language:
+
+```bash
+automountd --lang en list
+automountd --lang zh status
+AUTOMOUNTD_LANG=en automountd doctor
+```
+
+`--lang` must appear before the subcommand. English currently covers help, the TUI, list/status,
+doctor, and the main command messages; detailed errors from `core`/`system` are still being translated.
 
 ## Configuration
 
@@ -233,7 +247,7 @@ Exit codes: `0` success; `1` general error; `3` service not running; `4` permiss
 ## Development and testing
 
 ```bash
-cargo test --all-targets   # 114 unit tests + 4 CLI integration tests
+cargo test --all-targets   # 116 unit tests + 6 CLI integration tests
 cargo check --all-targets  # type check
 cargo clippy --all-targets # lints
 cargo build --release
@@ -274,6 +288,7 @@ src/
   ui/                   presentation layer
     cli.rs              CLI parsing and subcommands
     tui.rs              interactive UI
+    i18n.rs             Chinese/English UI strings
     term.rs             terminal formatting
     logging.rs          logging
 packaging/              systemd unit and install scripts

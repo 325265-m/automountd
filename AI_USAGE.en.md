@@ -60,7 +60,7 @@ cargo check --all-targets --target x86_64-unknown-linux-gnu
 cargo build --release
 ```
 
-Current result: **114 unit tests + 4 CLI integration tests pass**, no `clippy` warnings, Linux target
+Current result: **116 unit tests + 6 CLI integration tests pass**, no `clippy` warnings, Linux target
 cross-check passes.
 
 ## Scope of AI involvement

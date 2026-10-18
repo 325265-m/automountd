@@ -46,7 +46,7 @@
 - **CLI + TUI**：`automountd list / mount / umount / status / doctor / tui`，输出按中英文宽度对齐。
 - **systemd 集成**：附带加固过的 unit，日志进 journald。
 
-> 状态说明：仓库包含 114 个单元测试 + 4 个 CLI 集成测试；Linux 专属代码通过 `cargo check --target x86_64-unknown-linux-gnu` 交叉检查，
+> 状态说明：仓库包含 116 个单元测试 + 6 个 CLI 集成测试；Linux 专属代码通过 `cargo check --target x86_64-unknown-linux-gnu` 交叉检查，
 > 但真实挂载动作需要在 Linux 实机上验证（开发机为 Windows，无法执行 mount 系统调用）。
 
 ## 安装
@@ -126,6 +126,19 @@ automountd doctor
  [2]  sdc1   备份盘    ext4    1.8 TiB   已挂载   /media/alice/备份盘
 命令 (m <编号> 挂载, u <编号> 卸载, r 刷新, a 全部, q 退出):
 ```
+
+### 界面语言
+
+CLI/TUI 内置中英文，默认跟随 `LANG` / `AUTOMOUNTD_LANG`，也可用全局选项 `--lang` 强制指定：
+
+```bash
+automountd --lang en list
+automountd --lang zh status
+AUTOMOUNTD_LANG=en automountd doctor
+```
+
+`--lang` 必须放在子命令之前。当前英文覆盖帮助、TUI、列表/状态、doctor 与主要命令输出；
+部分来自 core/system 的详细错误消息仍在逐步翻译。
 
 ## 配置
 
@@ -217,7 +230,7 @@ sudo automountd fstab remove --target /media/alice/U盘
 ## 开发与测试
 
 ```bash
-cargo test --all-targets   # 114 个单元测试 + 4 个 CLI 集成测试
+cargo test --all-targets   # 116 个单元测试 + 6 个 CLI 集成测试
 cargo check --all-targets  # 类型检查
 cargo clippy --all-targets # 静态检查
 cargo build --release
@@ -258,6 +271,7 @@ src/
   ui/                   表现层
     cli.rs              命令行解析与子命令
     tui.rs              交互式界面
+    i18n.rs             中英文界面文案
     term.rs             终端格式化
     logging.rs          日志
 packaging/              systemd unit 与安装脚本

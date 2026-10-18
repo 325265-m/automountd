@@ -87,3 +87,34 @@ fn list_all_succeeds_without_devices() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(!stdout.contains("panicked"), "输出异常: {stdout}");
 }
+
+#[test]
+fn english_help_and_version() {
+    let help = Command::new(binary())
+        .args(["--lang", "en", "--help"])
+        .output()
+        .expect("运行 --lang en --help 失败");
+    assert!(help.status.success());
+    let stdout = String::from_utf8_lossy(&help.stdout);
+    assert!(stdout.contains("Usage:"), "帮助未切换为英文: {stdout}");
+    assert!(stdout.contains("Linux disk auto-mount daemon"));
+
+    let version = Command::new(binary())
+        .args(["--lang", "en", "--version"])
+        .output()
+        .expect("运行 --lang en --version 失败");
+    assert!(version.status.success());
+    let stdout = String::from_utf8_lossy(&version.stdout);
+    assert!(stdout.contains("Target:"), "版本输出未切换为英文: {stdout}");
+}
+
+#[test]
+fn rejects_unknown_language() {
+    let output = Command::new(binary())
+        .args(["--lang", "fr", "--help"])
+        .output()
+        .expect("运行 --lang fr 失败");
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("不支持的语言") || stderr.contains("Unsupported language"));
+}

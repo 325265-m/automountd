@@ -13,6 +13,7 @@ use crate::exec::{CommandRunner, SystemRunner};
 use crate::inventory;
 use crate::state;
 use crate::term::{self, Colors};
+use crate::ui::i18n;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Command {
@@ -57,7 +58,13 @@ pub fn run(config: &Config) -> Result<()> {
     loop {
         let rows = fetch_rows(config, &*runner, include_all)?;
         render(config, &rows, include_all, &colors);
-        print!("\n命令 (m <编号> 挂载, u <编号> 卸载, r 刷新, a 全部, q 退出): ");
+        print!(
+            "\n{} ",
+            i18n::tr(
+                "命令 (m <编号> 挂载, u <编号> 卸载, r 刷新, a 全部, q 退出):",
+                "Command (m <n> mount, u <n> unmount, r refresh, a all, q quit):"
+            )
+        );
         io::stdout().flush().ok();
 
         let mut line = String::new();
@@ -66,12 +73,22 @@ pub fn run(config: &Config) -> Result<()> {
             Ok(0) => break,
             Ok(_) => {}
             Err(err) => {
-                return Err(Error::new(ErrorKind::Io, format!("读取输入失败: {err}")));
+                return Err(Error::new(
+                    ErrorKind::Io,
+                    format!(
+                        "{}: {err}",
+                        i18n::tr("读取输入失败", "failed to read input")
+                    ),
+                ));
             }
         }
         let line = line.trim().to_string();
         let Some(command) = parse_command(&line) else {
-            println!("无法识别的命令: {line}（输入 h 查看帮助）");
+            println!(
+                "{}: {line}{}",
+                i18n::tr("无法识别的命令", "Unknown command"),
+                i18n::tr("（输入 h 查看帮助）", " (type h for help)")
+            );
             wait_enter();
             continue;
         };
@@ -86,7 +103,7 @@ pub fn run(config: &Config) -> Result<()> {
             }
             Command::Mount(index) => {
                 let Some(row) = rows.get(index - 1) else {
-                    println!("没有编号为 {index} 的设备");
+                    println!("{} {index}", i18n::tr("没有编号为", "No device with index"));
                     wait_enter();
                     continue;
                 };
@@ -97,9 +114,9 @@ pub fn run(config: &Config) -> Result<()> {
                         wait_enter();
                     }
                     Err(err) => {
-                        println!("挂载失败: {err}");
+                        println!("{}: {err}", i18n::tr("挂载失败", "Mount failed"));
                         if let Some(hint) = &err.hint {
-                            println!("提示: {hint}");
+                            println!("{}: {hint}", i18n::tr("提示", "Hint"));
                         }
                         wait_enter();
                     }
@@ -107,7 +124,7 @@ pub fn run(config: &Config) -> Result<()> {
             }
             Command::Umount(index) => {
                 let Some(row) = rows.get(index - 1) else {
-                    println!("没有编号为 {index} 的设备");
+                    println!("{} {index}", i18n::tr("没有编号为", "No device with index"));
                     wait_enter();
                     continue;
                 };
@@ -122,9 +139,9 @@ pub fn run(config: &Config) -> Result<()> {
                         wait_enter();
                     }
                     Err(err) => {
-                        println!("卸载失败: {err}");
+                        println!("{}: {err}", i18n::tr("卸载失败", "Unmount failed"));
                         if let Some(hint) = &err.hint {
-                            println!("提示: {hint}");
+                            println!("{}: {hint}", i18n::tr("提示", "Hint"));
                         }
                         wait_enter();
                     }
@@ -163,19 +180,24 @@ fn render(config: &Config, rows: &[Vec<String>], include_all: bool, colors: &Col
     let running = ctl::is_running(&config.ctl_socket);
     println!(
         "{}  {}",
-        colors.bold("automountd 交互界面"),
+        colors.bold(i18n::tr("automountd 交互界面", "automountd interactive UI")),
         if running {
-            colors.green("服务运行中")
+            colors.green(i18n::tr("服务运行中", "service running"))
         } else {
-            colors.yellow("服务未运行（直接操作需 root）")
+            colors.yellow(i18n::tr(
+                "服务未运行（直接操作需 root）",
+                "service not running (direct actions need root)",
+            ))
         }
     );
     println!(
-        "挂载根目录: {}    设备数: {}{}",
+        "{}: {}    {}: {}{}",
+        i18n::tr("挂载根目录", "Mount root"),
         config.mount_root.display(),
+        i18n::tr("设备数", "devices"),
         rows.len(),
         if include_all {
-            "（显示全部）"
+            i18n::tr("（显示全部）", " (showing all)")
         } else {
             ""
         }
@@ -183,7 +205,13 @@ fn render(config: &Config, rows: &[Vec<String>], include_all: bool, colors: &Col
     println!();
 
     if rows.is_empty() {
-        println!("未发现设备。插入磁盘后按 r 刷新。");
+        println!(
+            "{}",
+            i18n::tr(
+                "未发现设备。插入磁盘后按 r 刷新。",
+                "No devices found. Insert a disk and press r to refresh."
+            )
+        );
         return;
     }
 
@@ -194,11 +222,14 @@ fn render(config: &Config, rows: &[Vec<String>], include_all: bool, colors: &Col
         }
         let mounted = row[5] == "1";
         let status = if mounted {
-            colors.green("已挂载")
+            colors.green(i18n::tr("已挂载", "mounted"))
         } else if row[7] == "ok" {
-            colors.cyan("可挂载")
+            colors.cyan(i18n::tr("可挂载", "mountable"))
         } else {
-            colors.dim(&term::truncate(&row[8], 24))
+            colors.dim(&term::truncate(
+                &crate::cli::decision_message(&row[7], &row[8]),
+                24,
+            ))
         };
         table_rows.push(vec![
             format!("[{}]", index + 1),
@@ -217,7 +248,15 @@ fn render(config: &Config, rows: &[Vec<String>], include_all: bool, colors: &Col
     print!(
         "{}",
         term::table(
-            &["#", "设备", "卷标", "文件系统", "容量", "状态", "挂载点"],
+            &[
+                "#",
+                i18n::tr("设备", "Device"),
+                i18n::tr("卷标", "Label"),
+                i18n::tr("文件系统", "Filesystem"),
+                i18n::tr("容量", "Size"),
+                i18n::tr("状态", "Status"),
+                i18n::tr("挂载点", "Mount point"),
+            ],
             &table_rows
         )
     );
@@ -234,7 +273,8 @@ fn mount_device(config: &Config, reference: &str) -> Result<String> {
             return Err(Error::new(ErrorKind::Mount, response.message));
         }
         return Ok(format!(
-            "已挂载 {reference} -> {}",
+            "{} {reference} -> {}",
+            i18n::tr("已挂载", "Mounted"),
             response.meta_value("target").unwrap_or("?")
         ));
     }
@@ -243,7 +283,8 @@ fn mount_device(config: &Config, reference: &str) -> Result<String> {
     let manager_runner: Arc<dyn CommandRunner> = Arc::new(SystemRunner);
     let result = crate::cli::local_mount(config, manager_runner, reference, false, false)?;
     Ok(format!(
-        "已挂载 {} -> {}",
+        "{} {} -> {}",
+        i18n::tr("已挂载", "Mounted"),
         result.device.path,
         result.target.display()
     ))
@@ -265,23 +306,34 @@ fn umount_device(config: &Config, reference: &str) -> Result<String> {
             return Err(Error::new(ErrorKind::Mount, response.message));
         }
         return Ok(format!(
-            "已卸载 {}",
+            "{} {}",
+            i18n::tr("已卸载", "Unmounted"),
             response.meta_value("target").unwrap_or(reference)
         ));
     }
     let manager_runner: Arc<dyn CommandRunner> = Arc::new(SystemRunner);
     let target = crate::cli::local_umount(config, manager_runner, reference, false, false)?;
-    Ok(format!("已卸载 {target}"))
+    Ok(format!("{} {target}", i18n::tr("已卸载", "Unmounted")))
 }
 
 fn wait_enter() {
-    print!("按回车继续…");
+    print!("{}", i18n::tr("按回车继续…", "Press Enter to continue..."));
     io::stdout().flush().ok();
     let mut line = String::new();
     let _ = io::stdin().read_line(&mut line);
 }
 
 fn print_help() {
+    if i18n::is_en() {
+        println!("Commands:");
+        println!("  m <n>   Mount that device");
+        println!("  u <n>   Unmount that device");
+        println!("  r       Refresh the list");
+        println!("  a       Toggle \"show all devices\"");
+        println!("  h       Show this help");
+        println!("  q       Quit");
+        return;
+    }
     println!("命令:");
     println!("  m <编号>   挂载该设备");
     println!("  u <编号>   卸载该设备");
