@@ -317,8 +317,8 @@ real mounting still needs Linux validation.
 - Questions and support: [SUPPORT.en.md](SUPPORT.en.md)
 - Changelog: [CHANGELOG.en.md](CHANGELOG.en.md)
 
-Issues and pull requests are welcome in English or Chinese. Changes touching mounting, permissions, or
-paths should include verification results from a real Linux machine.
+Issues and pull requests are welcome in English or Chinese; English issue forms are provided.
+Changes touching mounting, permissions, or paths should include verification results from a real Linux machine.
 
 ## License
 

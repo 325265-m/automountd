@@ -306,7 +306,7 @@ AI 产出需经过测试、静态检查与审查，不作为正确性保证；�
 - 版本变更：[CHANGELOG.md](CHANGELOG.md)
 - English documentation: [README.en.md](README.en.md)
 
-欢迎提交 Issue 与 Pull Request；涉及挂载、权限、路径的改动请附 Linux 实机验证结果。
+欢迎提交 Issue 与 Pull Request（中英文均可）；GitHub 提供中英文 Issue 模板。涉及挂载、权限、路径的改动请附 Linux 实机验证结果。
 
 ## License
 

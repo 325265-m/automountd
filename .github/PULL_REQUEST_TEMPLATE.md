@@ -1,43 +1,48 @@
 # Pull Request
 
-## 摘要
+## Summary / 摘要
 
-<!-- 这个 PR 做了什么？为什么需要？ -->
+<!-- What does this PR do? Why is it needed? / 这个 PR 做了什么？为什么需要？ -->
 
-## 变更类型
+## Type of change / 变更类型
 
-- [ ] 修复 bug
-- [ ] 新功能
-- [ ] 重构（不改变行为）
-- [ ] 文档 / 注释
-- [ ] 构建 / CI / 打包
-- [ ] 安全加固
+- [ ] Bug fix / 修复 bug
+- [ ] New feature / 新功能
+- [ ] Refactor (no behavior change) / 重构（不改变行为）
+- [ ] Documentation / 文档
+- [ ] Build / CI / packaging / 构建 / CI / 打包
+- [ ] Security hardening / 安全加固
 
-## 关联 issue
+## Related issue / 关联 issue
 
 Closes #
 
-## 实现说明
+## Implementation notes / 实现说明
 
-<!-- 关键设计、取舍、可能的副作用 -->
+<!-- Key design choices, tradeoffs, possible side effects / 关键设计、取舍、可能的副作用 -->
 
-## 测试
+## Testing / 测试
 
-- [ ] `cargo test --offline`
+- [ ] `cargo test --all-targets`
 - [ ] `cargo clippy --all-targets`
 - [ ] `cargo fmt --all -- --check`
-- [ ] 在 Linux 实机验证（如涉及 mount/udev/权限，请注明发行版与内核）
-- [ ] 新增/更新了对应测试
-- [ ] 更新了 `README.md` / `CHANGELOG.md`（行为变更）
-- [ ] 如使用 AI 辅助，已在描述中说明工具、范围与验证方式（见 `AI_USAGE.md`）
+- [ ] Verified on a real Linux machine when touching mount/udev/permissions
+      （涉及挂载/udev/权限时已在 Linux 实机验证，请注明发行版与内核）
+- [ ] Added/updated tests / 新增或更新了测试
+- [ ] Updated `README.md` / `README.en.md` and `CHANGELOG.md` / `CHANGELOG.en.md`
+      （更新了中英文 README 与 CHANGELOG）
+- [ ] Disclosed AI assistance if used (see `AI_USAGE.md` / `AI_USAGE.en.md`)
+      （如使用 AI 辅助，已披露工具、范围与验证方式）
 
-## 安全影响
+## Security impact / 安全影响
 
 <!--
+Does this touch root privileges, mount-point paths, symlinks, the control socket, or fstab writes?
+Explain the attack surface and mitigations, or write "none".
 是否涉及 root 权限、挂载点路径、符号链接、控制 socket、fstab 写入？
 如有，请说明攻击面与缓解措施；没有则写“无”。
 -->
 
-## 截图 / 日志（可选）
+## Screenshots / logs (optional) / 截图或日志（可选）
 
-<!-- TUI 输出、doctor 结果、journalctl 片段等 -->
+<!-- TUI output, doctor output, journalctl excerpt, etc. -->

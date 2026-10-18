@@ -11,6 +11,7 @@ and this project follows [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- English issue forms (bug / feature) and a bilingual pull-request template.
 - English documentation: `README.en.md`, `CONTRIBUTING.en.md`, `SECURITY.en.md`, `SUPPORT.en.md`,
   `AI_USAGE.en.md`, `AGENTS.en.md`, and `CHANGELOG.en.md`.
 - Declared that this project was completed by **deepseekv4flash**.

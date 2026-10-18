@@ -1,0 +1,87 @@
+name: Bug report (English)
+description: Report a reproducible defect or unexpected behavior
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. Please search existing issues first and include reproducible steps.
+        For security vulnerabilities, do not open a public issue; see [SECURITY.md](../../SECURITY.en.md).
+
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched existing issues and this is not a duplicate
+          required: true
+        - label: This is not a security vulnerability (report those privately)
+          required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: automountd version
+      description: Output of `automountd --version`
+      placeholder: "automountd 1.0.0"
+    validations:
+      required: true
+
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: Distribution, kernel, filesystem, desktop environment
+      placeholder: "Ubuntu 24.04 / 6.8.0 / exfat / GNOME 46"
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Plug in a USB drive ...
+        2. Run automountd list --all ...
+        3. Observe ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Diagnostics
+      description: Paste `automountd doctor`, `automountd status`, `automountd list --all`, and relevant logs
+      render: shell
+      placeholder: |
+        $ automountd doctor
+        ...
+
+        $ journalctl -u automountd -n 100 --no-pager
+        ...
+    validations:
+      required: false
+
+  - type: textarea
+    id: config
+    attributes:
+      label: Configuration snippet
+      description: If you changed the config, paste the relevant part (remove UUIDs and other sensitive data)
+      render: ini
+    validations:
+      required: false

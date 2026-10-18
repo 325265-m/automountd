@@ -11,6 +11,7 @@
 
 ### Added
 
+- 新增英文 Issue 表单（Bug / Feature）与中英双语 Pull Request 模板。
 - 新增英文版文档：`README.en.md`、`CONTRIBUTING.en.md`、`SECURITY.en.md`、`SUPPORT.en.md`、
   `AI_USAGE.en.md`、`AGENTS.en.md`、`CHANGELOG.en.md`。
 - 在 README 与 AI_USAGE 中声明本项目由 **deepseekv4flash** 完成。

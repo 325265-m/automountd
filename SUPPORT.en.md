@@ -12,6 +12,7 @@ English | [简体中文](SUPPORT.md)
 ## Questions and bug reports
 
 - **Usage questions / feature requests**: use the corresponding GitHub issue template
+  (English forms are available as `Bug report (English)` and `Feature request (English)`)
 - **Reproducible bugs**: include `automountd doctor`, `automountd list --all`, distribution/kernel version,
   and relevant logs
 - **Security vulnerabilities**: do not disclose publicly; follow [SECURITY.en.md](SECURITY.en.md)

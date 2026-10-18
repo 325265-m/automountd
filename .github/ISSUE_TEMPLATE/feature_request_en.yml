@@ -1,0 +1,64 @@
+name: Feature request (English)
+description: Suggest a new feature or improvement
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please search existing issues first. Describe the use case, not just the implementation.
+
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched existing issues and this is not a duplicate
+          required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem to solve
+      description: What is inconvenient today? For example, "only the first partition of a multi-partition drive is mounted".
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: How should automountd behave? What alternatives did you consider?
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Affected area
+      multiple: true
+      options:
+        - udev / hotplug
+        - Mount policy / security
+        - CLI / TUI
+        - fstab persistence
+        - Desktop notifications / user detection
+        - Packaging / systemd
+        - Documentation
+        - Other
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives
+      description: How do you work around this today? Is there a smaller change that would help?
+    validations:
+      required: false
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Distribution, desktop environment, relevant configuration, etc.
+    validations:
+      required: false
