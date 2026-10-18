@@ -321,6 +321,15 @@ impl PollMonitor {
                     continue;
                 }
 
+                // 枚举失败（lsblk 暂时报错）会返回空集合；不要因此给所有设备发 remove。
+                if current.is_empty() && !previous.is_empty() {
+                    logging::debug("轮询未枚举到设备，可能是临时失败，跳过本轮差异比较");
+                    if !sleep_until(interval) {
+                        return;
+                    }
+                    continue;
+                }
+
                 for name in current.difference(&previous) {
                     if sender.send(poll_event("add", name)).is_err() {
                         logging::debug("轮询事件接收端已关闭，停止轮询");

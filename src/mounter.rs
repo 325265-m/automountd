@@ -217,11 +217,15 @@ impl MountManager {
             self.created_dirs.insert(base.clone());
         }
         let target_existed = plan.target.exists();
-        naming::check_no_symlink_components(&self.config.mount_root, &plan.target)?;
+        // 用 canonical 后的 mount_root 做前缀，避免 mount_root 本身是符号链接时误判。
+        let canonical_root = canonicalize_root(&self.config.mount_root);
+        naming::check_no_symlink_components(&canonical_root, &plan.target)?;
         ensure_dir(&plan.target)?;
         if !target_existed {
             self.created_dirs.insert(plan.target.clone());
         }
+        // 在 mount 之前固定预期真实路径，挂载后再核对，封堵“检查后替换成符号链接”的竞态。
+        let expected_target = canonicalize_root(&plan.target);
 
         if let Some(user) = user {
             if fstypes::needs_ownership_fix(&plan.fstype, &self.config) {
@@ -312,11 +316,13 @@ impl MountManager {
             );
         }
 
-        // 防御符号链接竞态：确认内核实际挂载的位置就是预期目录。
-        let expected = mountinfo::normalize_path(&target_text);
+        // 防御符号链接竞态：确认内核实际挂载的位置就是 mount 前固定的真实目录。
+        let expected = mountinfo::normalize_path(&expected_target.display().to_string());
         let actual = mountinfo::find_mount(&self.current_mounts(), Some(&target_text), None)
             .map(|entry| mountinfo::normalize_path(&entry.target));
-        if actual.as_deref() != Some(expected.as_str()) {
+        let target_now = canonicalize_root(&plan.target);
+        let target_now = mountinfo::normalize_path(&target_now.display().to_string());
+        if actual.as_deref() != Some(expected.as_str()) || target_now != expected {
             let _ = self.runner.run(
                 "umount",
                 &[target_text.as_str()],
@@ -324,7 +330,7 @@ impl MountManager {
             );
             self.cleanup_empty_dirs(&plan.target);
             return Err(Error::mount(format!(
-                "实际挂载点与预期不一致（预期 {expected}，实际 {}）",
+                "实际挂载点与预期不一致（预期 {expected}，实际 {}，当前路径 {target_now}）",
                 actual.unwrap_or_else(|| "未知".to_string())
             ))
             .with_hint("挂载目录可能在挂载过程中被替换，请检查是否有其他进程操作该路径"));
@@ -548,11 +554,11 @@ impl MountManager {
 
     /// 只清理本次由本管理器创建的、位于 mount_root 之下的空目录。
     fn cleanup_empty_dirs(&mut self, target: &Path) {
-        let root = absolute_path(&self.config.mount_root)
-            .unwrap_or_else(|_| self.config.mount_root.clone());
+        let root = canonicalize_root(&self.config.mount_root);
         let Ok(target_abs) = absolute_path(target) else {
             return;
         };
+        let target_abs = canonicalize_root(&target_abs);
         if target_abs == root || !target_abs.starts_with(&root) {
             return;
         }

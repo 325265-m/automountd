@@ -51,6 +51,8 @@ pub struct Daemon {
     last_reconcile: Instant,
     last_error_notice: HashMap<String, Instant>,
     started_at: u64,
+    /// reload 后需要补一次全量扫描；放在事件循环里做，避免控制请求被挂载操作拖死。
+    pending_reconcile: bool,
 }
 
 impl Daemon {
@@ -78,6 +80,7 @@ impl Daemon {
             last_reconcile: Instant::now(),
             last_error_notice: HashMap::new(),
             started_at: platform::now_epoch(),
+            pending_reconcile: false,
         })
     }
 
@@ -186,6 +189,12 @@ impl Daemon {
 
             self.drain_jobs();
 
+            if self.pending_reconcile {
+                self.pending_reconcile = false;
+                self.reconcile(true);
+                self.last_reconcile = Instant::now();
+            }
+
             if self.should_stop() {
                 break;
             }
@@ -261,7 +270,6 @@ impl Daemon {
             logging::debug(format!("忽略 {name}：设备已消失或尚未就绪"));
             return;
         };
-        self.known.insert(device.name.clone());
         if !device.has_filesystem() {
             device = devices::refresh_device(&device, &*self.runner);
         }
@@ -326,13 +334,18 @@ impl Daemon {
             match self.manager.unmount(&record.target, false, false, false) {
                 Ok(target) => logging::info(format!("设备移除，已卸载 {target}")),
                 Err(err) => {
-                    // 卸载失败（通常是有进程占用）时保留记录，等下一次扫描/重新插入再处理，
-                    // 否则这个挂载会变成无人跟踪的“僵尸”。
                     logging::warn(format!(
-                        "设备 {} 已移除，但卸载 {} 失败，保留记录等待重试: {err}",
+                        "设备 {} 已移除，但正常卸载 {} 失败（{err}），尝试 lazy 卸载",
                         record.device, record.target
                     ));
-                    return;
+                    // 设备已经物理消失，lazy 卸载可以安全地把残留挂载从命名空间分离。
+                    match self.manager.unmount(&record.target, true, false, false) {
+                        Ok(target) => logging::info(format!("已 lazy 卸载 {target}")),
+                        Err(lazy_err) => logging::warn(format!(
+                            "lazy 卸载 {} 也失败，保留记录等待下次扫描: {lazy_err}",
+                            record.target
+                        )),
+                    }
                 }
             }
         }
@@ -802,11 +815,17 @@ impl Daemon {
         self.manager = MountManager::new(self.config.clone(), self.runner.clone());
         self.state.dry_run = self.config.dry_run;
         self.user_cache = None;
-        // 配置可能放行了新的设备/内置盘：清空已知集合后重新扫描一次，
-        // 否则这些设备会被增量扫描逻辑永久跳过。
+        // 配置可能放行了新的设备/内置盘：清空已知集合，让事件循环下一轮补一次
+        // 全量扫描。不要在这个控制请求里同步挂载——慢盘会让 CLI 超时并阻塞 status。
         self.known.clear();
+        self.pending_reconcile = true;
+        let job_timeout = self
+            .config
+            .mount_timeout_seconds
+            .max(self.config.unmount_timeout_seconds)
+            .saturating_add(20);
+        self.ctl.set_job_timeout(Duration::from_secs(job_timeout));
         self.state.save()?;
-        self.reconcile(true);
         logging::info("配置已重新加载");
         Ok(CtlResponse::success()
             .with_meta("reloaded", "1")

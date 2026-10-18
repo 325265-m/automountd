@@ -7,7 +7,7 @@
 //! 一条消息内以 TAB 分隔时不产生歧义。协议保持向后兼容：版本号变化即拒绝。
 
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc::Sender;
 use std::sync::Arc;
 use std::thread::JoinHandle;
@@ -274,7 +274,7 @@ pub struct CtlServer {
     #[cfg_attr(not(unix), allow(dead_code))]
     stop: Arc<AtomicBool>,
     #[cfg_attr(not(unix), allow(dead_code))]
-    job_timeout: Duration,
+    job_timeout: Arc<AtomicU64>,
     #[cfg_attr(not(unix), allow(dead_code))]
     active: Arc<AtomicUsize>,
     handle: Option<JoinHandle<()>>,
@@ -294,7 +294,7 @@ impl CtlServer {
             path: config.ctl_socket.clone(),
             jobs,
             stop: Arc::new(AtomicBool::new(false)),
-            job_timeout: Duration::from_secs(last_resort),
+            job_timeout: Arc::new(AtomicU64::new(last_resort)),
             active: Arc::new(AtomicUsize::new(0)),
             handle: None,
             #[cfg(unix)]
@@ -392,7 +392,7 @@ impl CtlServer {
         let jobs = self.jobs.clone();
         let stop = Arc::clone(&self.stop);
         let active = Arc::clone(&self.active);
-        let job_timeout = self.job_timeout;
+        let job_timeout = Arc::clone(&self.job_timeout);
         let handle = std::thread::spawn(move || {
             while !stop.load(Ordering::SeqCst) {
                 match worker.accept() {
@@ -405,10 +405,14 @@ impl CtlServer {
                         active.fetch_add(1, Ordering::SeqCst);
                         let jobs = jobs.clone();
                         let active_for_thread = Arc::clone(&active);
+                        let timeout_for_thread = Arc::clone(&job_timeout);
                         let spawned = std::thread::Builder::new()
                             .name("automountd-ctl".to_string())
                             .spawn(move || {
-                                handle_connection(stream, jobs, job_timeout);
+                                let timeout = Duration::from_secs(
+                                    timeout_for_thread.load(Ordering::SeqCst).max(1),
+                                );
+                                handle_connection(stream, jobs, timeout);
                                 active_for_thread.fetch_sub(1, Ordering::SeqCst);
                             });
                         if let Err(err) = spawned {
@@ -449,6 +453,12 @@ impl CtlServer {
 
     pub fn path(&self) -> &Path {
         &self.path
+    }
+
+    /// 重新加载配置后同步服务端等待上限，避免“客户端还在等、服务端已超时”。
+    pub fn set_job_timeout(&mut self, timeout: Duration) {
+        self.job_timeout
+            .store(timeout.as_secs().max(1), Ordering::SeqCst);
     }
 }
 

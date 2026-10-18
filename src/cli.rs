@@ -46,12 +46,16 @@ pub fn run() -> i32 {
 
 pub fn run_with_args(args: &[String]) -> Result<i32> {
     let (global, rest) = parse_global(args)?;
-    if global.help || rest.is_empty() {
+    if global.help {
         print_help();
         return Ok(0);
     }
     if global.version {
         print_version();
+        return Ok(0);
+    }
+    if rest.is_empty() {
+        print_help();
         return Ok(0);
     }
 
@@ -528,6 +532,12 @@ fn cmd_mount(config: &Config, runner: Arc<dyn CommandRunner>, tail: &[String]) -
     let result = local_mount(config, runner, reference, read_only, force)?;
     if result.already_mounted {
         println!("{} 已经挂载在 {}", reference, result.target.display());
+    } else if result.dry_run {
+        println!(
+            "dry-run：将把 {} 挂载到 {}（未执行）",
+            result.device.path,
+            result.target.display()
+        );
     } else {
         println!(
             "已挂载 {} -> {}",
@@ -625,7 +635,12 @@ fn cmd_umount(config: &Config, runner: Arc<dyn CommandRunner>, tail: &[String]) 
                 .arg(reference)
                 .arg(if lazy { "1" } else { "0" })
                 .arg(if eject { "1" } else { "0" }),
-            Duration::from_secs(config.unmount_timeout_seconds.saturating_add(30)),
+            Duration::from_secs(
+                config
+                    .mount_timeout_seconds
+                    .max(config.unmount_timeout_seconds)
+                    .saturating_add(30),
+            ),
         )?)?;
         println!(
             "已卸载 {}",
@@ -683,7 +698,9 @@ pub(crate) fn local_umount(
         .with_hint("系统挂载点请使用 umount 命令手动处理"));
     }
 
-    platform::require_root("卸载")?;
+    if !config.dry_run {
+        platform::require_root("卸载")?;
+    }
     let mut manager = MountManager::new(config.clone(), runner);
     let unmounted = manager.unmount(&target, lazy, eject, false)?;
     if config.dry_run {
@@ -706,14 +723,22 @@ fn cmd_reload(config: &Config, tail: &[String]) -> Result<i32> {
         println!("用法: automountd reload");
         return Ok(0);
     }
+    if config.dry_run {
+        println!("dry-run：将重新加载配置（未联系守护进程）");
+        return Ok(0);
+    }
     if !ctl::is_running(&config.ctl_socket) {
         return Err(Error::new(ErrorKind::NotRunning, "自动挂载服务未运行")
             .with_hint("请先启动: sudo systemctl start automountd"));
     }
+    let timeout = config
+        .mount_timeout_seconds
+        .max(config.unmount_timeout_seconds)
+        .saturating_add(30);
     let response = ensure_ok(ctl::request(
         &config.ctl_socket,
         &CtlRequest::new("reload"),
-        Duration::from_secs(15),
+        Duration::from_secs(timeout),
     )?)?;
     println!("配置已重新加载");
     if response.meta_value("socket_changed") == Some("1") {

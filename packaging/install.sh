@@ -73,6 +73,9 @@ BIN="${ROOT_DIR}/target/release/automountd"
 info "安装可执行文件到 ${BINDIR}/automountd"
 install -Dm755 "$BIN" "${BINDIR}/automountd"
 
+info "安装文档"
+install -Dm644 "${ROOT_DIR}/README.md" "${PREFIX}/share/doc/automountd/README.md"
+
 info "准备配置目录 ${CONFDIR}"
 install -d -m755 "${CONFDIR}"
 if [ ! -f "${CONFDIR}/config.conf" ]; then
@@ -83,7 +86,10 @@ else
 fi
 
 info "安装 systemd 服务"
-install -Dm644 "${SCRIPT_DIR}/${SERVICE}" "${UNITDIR}/${SERVICE}"
+install -d -m755 "${UNITDIR}"
+sed "s|/usr/local/bin/automountd|${BINDIR}/automountd|g" \
+    "${SCRIPT_DIR}/${SERVICE}" > "${UNITDIR}/${SERVICE}"
+chmod 644 "${UNITDIR}/${SERVICE}"
 systemctl daemon-reload
 
 if [ "$NO_START" -eq 0 ]; then

@@ -254,7 +254,12 @@ fn umount_device(config: &Config, reference: &str) -> Result<String> {
         let response = ctl::request(
             &config.ctl_socket,
             &CtlRequest::new("umount").arg(reference).arg("0").arg("0"),
-            std::time::Duration::from_secs(config.unmount_timeout_seconds.saturating_add(30)),
+            std::time::Duration::from_secs(
+                config
+                    .mount_timeout_seconds
+                    .max(config.unmount_timeout_seconds)
+                    .saturating_add(30),
+            ),
         )?;
         if !response.ok {
             return Err(Error::new(ErrorKind::Mount, response.message));

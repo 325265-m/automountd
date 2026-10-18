@@ -23,7 +23,10 @@ lint:
 
 install: build
 	install -Dm755 target/release/automountd $(BINDIR)/automountd
-	install -Dm644 packaging/automountd.service $(UNITDIR)/automountd.service
+	install -d -m755 $(UNITDIR)
+	sed "s|/usr/local/bin/automountd|$(BINDIR)/automountd|g" packaging/automountd.service > $(UNITDIR)/automountd.service
+	chmod 644 $(UNITDIR)/automountd.service
+	install -Dm644 README.md $(DESTDIR)$(PREFIX)/share/doc/automountd/README.md
 	install -d -m755 $(CONFDIR)
 	@echo "已安装二进制与 systemd unit；下一步："
 	@echo "  sudo automountd config init"

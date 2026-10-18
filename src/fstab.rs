@@ -70,6 +70,7 @@ pub fn escape_field(text: &str) -> String {
             '\\' => out.push_str("\\\\"),
             ' ' => out.push_str("\\040"),
             '\t' => out.push_str("\\011"),
+            '#' => out.push_str("\\043"),
             other => out.push(other),
         }
     }
@@ -282,14 +283,17 @@ fn entry_matches(entry: &FstabEntry, source: Option<&str>, target: Option<&str>)
 fn normalize_source(source: &str) -> String {
     let trimmed = source.trim();
     for prefix in ["UUID=", "PARTUUID=", "LABEL="] {
-        if trimmed.len() >= prefix.len() && trimmed[..prefix.len()].eq_ignore_ascii_case(prefix) {
-            let value = trimmed[prefix.len()..].trim();
-            let value = if prefix.eq_ignore_ascii_case("LABEL=") {
-                value.to_string()
-            } else {
-                value.to_ascii_uppercase()
-            };
-            return format!("{}{}", prefix.to_ascii_uppercase(), value);
+        // 用 get() 而不是字节切片：避免在非 ASCII 字符中间切开导致 panic。
+        if let Some(head) = trimmed.get(..prefix.len()) {
+            if head.eq_ignore_ascii_case(prefix) {
+                let value = trimmed[prefix.len()..].trim();
+                let value = if prefix.eq_ignore_ascii_case("LABEL=") {
+                    value.to_string()
+                } else {
+                    value.to_ascii_uppercase()
+                };
+                return format!("{}{}", prefix.to_ascii_uppercase(), value);
+            }
         }
     }
     trimmed.to_string()
