@@ -1,104 +1,107 @@
 # AGENTS.md
 
-**简体中文** | [English](AGENTS.en.md)
+English | [简体中文](AGENTS.zh.md)
 
-本文件面向在本仓库工作的 AI 编码代理（Codex、Cursor、Copilot、Claude Code、DSH 等）。
-人类贡献者请阅读 [CONTRIBUTING.md](CONTRIBUTING.md)。
+This file is for AI coding agents working in this repository (Codex, Cursor, Copilot, Claude Code, DSH, etc.).
+Human contributors should read [CONTRIBUTING.md](CONTRIBUTING.md).
 
-## 先读这些
+## Read first
 
-1. [README.md](README.md)：功能、安装、配置与安全设计
-2. [AI_USAGE.md](AI_USAGE.md)：AI 使用披露与验证要求
-3. [SECURITY.md](SECURITY.md)：安全边界，改动前必须理解
-4. `src/lib.rs` 与各层 `mod.rs`：当前模块划分
+1. [README.md](README.md): features, installation, configuration, security design
+2. [AI_USAGE.md](AI_USAGE.md): AI disclosure and verification requirements
+3. [SECURITY.md](SECURITY.md): security boundaries; understand before changing code
+4. `src/lib.rs` and the `mod.rs` of each layer: current module layout
 
-## 不可协商的约束
+## Non-negotiable constraints
 
-1. **依赖受控（不再禁止第三方 crate）**：当前 `[dependencies]` 为空是设计选择，不是禁令。
-   新增依赖必须：
-   - 优先标准库或现有实现；能用少量安全代码解决的不引入大依赖；
-   - 在 PR 中说明用途、替代方案、维护状态、许可证（必须与 GPL-3.0-or-later 兼容）；
-   - 同步更新 `Cargo.lock`，确保 CI 可构建；
-   - 运行时依赖（尤其涉及 root 守护进程、挂载、路径处理）需要额外安全审查；
-   - 禁止来源不明、无人维护或与现有能力重复的 crate。
-2. **MSRV 1.74 / edition 2021**：不要使用更高版本才稳定的标准库 API 或语言特性。
-3. **分层**：
-   - `src/core/`：纯逻辑（配置、模型、策略、解析）。不要新增系统调用；现有 `mountinfo` 读取 `/proc` 是既定例外。
-   - `src/system/`：系统交互（命令、设备、挂载、fstab、状态、udev、会话）。
-   - `src/app/`：守护进程、控制接口、设备视图。
-   - `src/ui/`：CLI、TUI、终端、日志。
-   新模块必须放入正确的层，并在层 `mod.rs` 与 `src/lib.rs` 中声明。
-4. **外部命令**：必须通过 `system::exec::CommandRunner` 执行，以便测试注入 `MockRunner`。
-   唯一例外是 `system/udev.rs` 需要流式读取 `udevadm monitor` 子进程。
-5. **`unsafe`**：只允许在 `system/platform.rs` 的 libc FFI 与 `app/ctl.rs` 的 `SO_PEERCRED` 中使用；
-   新增 `unsafe` 必须写明安全性理由。
-6. **安全默认值不得削弱**：
-   - 系统盘默认拒绝自动挂载；
-   - 挂载选项默认包含 `nosuid,nodev`；
-   - 挂载点必须位于 `mount_root` 下，拒绝 `..` 与符号链接；
-   - 控制接口 `SO_PEERCRED` 失败必须 fail-closed；
-   - `mount --force`、`shutdown`、`reload`、卸载他人挂载只允许 root / 当前桌面用户；
-   - fstab 写入必须拒绝 `mount_root` 之外的挂载点与含换行字段。
-   不要为了让测试通过而放宽这些规则。
-7. **许可证**：代码以 GPL-3.0-or-later 授权。不要引入与 GPL 不兼容的代码；不要修改 `LICENSE` / `NOTICE`。
+1. **Controlled dependencies (third-party crates are no longer forbidden)**: an empty `[dependencies]` table
+   is a design choice, not a ban. New dependencies must:
+   - prefer std or existing implementations; avoid large dependencies for small, safe code;
+   - document purpose, alternatives, maintenance status, and license (must be GPL-3.0-or-later compatible);
+   - update `Cargo.lock` and keep CI buildable;
+   - receive extra security review when used by the root daemon, mounting, or path handling;
+   - never be unmaintained, of unknown origin, or duplicate existing capabilities.
+2. **MSRV 1.74 / edition 2021**: do not use standard-library APIs or language features stabilized later.
+3. **Layering**:
+   - `src/core/`: pure logic (config, model, policy, parsing). Do not add system calls; the existing
+     `/proc` read in `mountinfo` is a known exception.
+   - `src/system/`: system interaction (commands, devices, mounts, fstab, state, udev, sessions).
+   - `src/app/`: daemon, control interface, device views.
+   - `src/ui/`: CLI, TUI, terminal, logging.
+   Declare new modules in the layer's `mod.rs` and in `src/lib.rs`.
+4. **External commands**: always go through `system::exec::CommandRunner` so tests can inject `MockRunner`.
+   The only exception is the streaming `udevadm monitor` child process in `system/udev.rs`.
+5. **`unsafe`**: only allowed for libc FFI in `system/platform.rs` and `SO_PEERCRED` in `app/ctl.rs`.
+   New `unsafe` requires a safety justification.
+6. **Never weaken security defaults**:
+   - system disks are not auto-mounted;
+   - default mount options include `nosuid,nodev`;
+   - mount points must be under `mount_root`; `..` and symlinks are rejected;
+   - `SO_PEERCRED` failures must fail closed;
+   - `mount --force`, `shutdown`, `reload`, and unmounting other users' mounts are root/desktop-user only;
+   - fstab writes must reject targets outside `mount_root` and fields containing newlines.
+   Do not relax these rules to make tests pass.
+7. **License**: code is GPL-3.0-or-later. Do not introduce GPL-incompatible code; do not modify
+   `LICENSE` / `NOTICE`.
 
-## 常用命令
+## Common commands
 
 ```bash
-# 全量测试（单元 + CLI 集成）
+# Full test suite (unit + CLI integration)
 cargo test --all-targets
 
-# 格式与静态检查
+# Formatting and lints
 cargo fmt --all
 cargo fmt --all -- --check
 cargo clippy --all-targets
 
-# 构建
+# Build
 cargo build --release
 
-# Linux 专属代码的交叉类型检查（需安装 target）
+# Linux-only code cross-check (target must be installed)
 cargo check --all-targets --target x86_64-unknown-linux-gnu
 ```
 
-CI 还会用 Rust 1.74 做 MSRV 检查。不要提交只在最新 nightly 上能编译的代码。
+CI also checks MSRV with Rust 1.74. Do not submit code that only compiles on the latest nightly.
 
-## 代码地图
+## Code map
 
 ```
-src/core/config.rs      配置解析、校验、模板
-src/core/model.rs       共享数据结构（设备、挂载、决策、记录）
-src/core/error.rs       统一错误类型与退出码
-src/core/naming.rs      卷标净化、路径包含性、符号链接检查
-src/core/policy.rs      自动挂载/手动挂载策略
-src/core/fstypes.rs     驱动选择与挂载选项
-src/core/mountinfo.rs   /proc/self/mountinfo 解析
-src/system/platform.rs  euid/chown/信号/终端等 FFI
+src/core/config.rs      config parsing, validation, template
+src/core/model.rs       shared data structures (devices, mounts, decisions, records)
+src/core/error.rs       unified error type and exit codes
+src/core/naming.rs      label sanitization, path containment, symlink checks
+src/core/policy.rs      auto-mount / manual-mount policy
+src/core/fstypes.rs     driver selection and mount options
+src/core/mountinfo.rs   /proc/self/mountinfo parser
+src/system/platform.rs  euid/chown/signals/terminal FFI
 src/system/exec.rs      CommandRunner / SystemRunner / MockRunner
-src/system/devices.rs   lsblk JSON、sysfs 兜底、设备解析
-src/system/mounter.rs   mount/umount、挂载点管理、错误诊断
-src/system/fstab.rs     fstab 解析与原子写入
-src/system/state.rs     运行状态 TSV
-src/system/sessions.rs  桌面用户识别
-src/system/udev.rs      udevadm 解析、轮询降级
+src/system/devices.rs   lsblk JSON, sysfs fallback, device resolution
+src/system/mounter.rs   mount/umount, mount-point management, diagnostics
+src/system/fstab.rs     fstab parsing and atomic writes
+src/system/state.rs     runtime state TSV
+src/system/sessions.rs  desktop user detection
+src/system/udev.rs      udevadm parsing, polling fallback
 src/system/notify.rs    notify-send
-src/app/daemon.rs       事件循环、控制命令分发、开机扫描
-src/app/ctl.rs          Unix socket 协议、服务端、客户端
-src/app/inventory.rs    设备视图快照
-src/ui/cli.rs           参数解析与子命令
-src/ui/tui.rs           交互式界面
-src/ui/i18n.rs          中英文界面文案
-src/ui/term.rs          表格/颜色/时间格式化
-src/ui/logging.rs       日志
+src/app/daemon.rs       event loop, control dispatch, boot scan
+src/app/ctl.rs          Unix socket protocol, server, client
+src/app/inventory.rs    device view snapshots
+src/ui/cli.rs           argument parsing and subcommands
+src/ui/tui.rs           interactive UI
+src/ui/i18n.rs          Chinese/English UI strings
+src/ui/term.rs          tables/colors/time formatting
+src/ui/logging.rs       logging
 ```
 
-## 修改流程
+## Workflow
 
-1. 先读相关模块与测试，确认现有约定；不要凭猜测新增公共 API。
-2. 优先在既有函数/类型上做最小改动；保持 `pub` 签名稳定，除非任务明确要求。
-3. 每个 bug 修复都补一个回归测试；每个新功能至少覆盖正常路径与一个失败路径。
-4. 纯逻辑测试必须能在非 Linux 上跑；Linux 专属代码放 `#[cfg(unix)]` 并说明如何在 Linux 验证。
-5. 更新文档：行为变更同步 `README.md` 与 `CHANGELOG.md`（`[Unreleased]`）。
-6. 提交前跑完整检查：
+1. Read the relevant modules and tests first; do not invent public APIs.
+2. Prefer minimal changes to existing functions/types; keep `pub` signatures stable unless the task requires it.
+3. Every bug fix needs a regression test; every feature needs a success path and at least one failure path.
+4. Pure-logic tests must run off Linux; put Linux-only code behind `#[cfg(unix)]` and explain how to verify it.
+5. Update docs: behavior changes go to `README.md` / `README.zh.md` and `CHANGELOG.md` / `CHANGELOG.zh.md`
+   (`[Unreleased]`).
+6. Run the full checks before committing:
 
 ```bash
 cargo fmt --all -- --check
@@ -107,22 +110,22 @@ cargo test --all-targets
 cargo build --release
 ```
 
-## 完成定义（Definition of Done）
+## Definition of done
 
-- [ ] 代码在 `cargo test --all-targets` 下全绿
-- [ ] `cargo clippy --all-targets` 无新增警告
-- [ ] `cargo fmt --all -- --check` 通过
-- [ ] Linux target `cargo check` 通过（涉及 `cfg(unix)` 时）
-- [ ] 新增/更新测试，包含失败路径
-- [ ] 安全相关改动有回归测试与风险说明
-- [ ] 更新 `CHANGELOG.md`，必要时更新 `README.md`
-- [ ] 新增依赖已说明理由、许可证与安全影响（当前无运行时依赖）
-- [ ] 未泄露真实 UUID、密钥、个人路径
+- [ ] `cargo test --all-targets` passes
+- [ ] `cargo clippy --all-targets` adds no warnings
+- [ ] `cargo fmt --all -- --check` passes
+- [ ] Linux target `cargo check` passes when `cfg(unix)` code changes
+- [ ] Tests added/updated, including failure paths
+- [ ] Security-relevant changes have regression tests and a risk note
+- [ ] `CHANGELOG.md` updated; `README.md` when needed
+- [ ] New dependencies have a reason, license, and security impact (currently no runtime deps)
+- [ ] No real UUIDs, secrets, or personal paths committed
 
-## 禁止事项
+## Prohibited
 
-- 不要为了让测试通过而删除/放宽安全测试。
-- 不要 `git commit --no-verify` 绕过钩子（如存在）。
-- 不要提交 `target/`、调试二进制、IDE 配置或真实设备信息。
-- 不要大段重排无关代码；保持 diff 可审查。
-- 不要伪造测试结果或声称在 Linux 上验证过却未实际运行。
+- Do not delete or weaken security tests to make the suite pass.
+- Do not bypass hooks with `git commit --no-verify` (if hooks exist).
+- Do not commit `target/`, debug binaries, IDE configuration, or real device information.
+- Do not reformat large unrelated areas; keep diffs reviewable.
+- Do not fabricate test results or claim Linux validation you did not perform.

@@ -7,7 +7,7 @@ body:
     attributes:
       value: |
         Thanks for the report. Please search existing issues first and include reproducible steps.
-        For security vulnerabilities, do not open a public issue; see [SECURITY.md](../../SECURITY.en.md).
+        For security vulnerabilities, do not open a public issue; see [SECURITY.md](../../SECURITY.md).
 
   - type: checkboxes
     id: preflight

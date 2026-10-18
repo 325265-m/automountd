@@ -1,19 +1,20 @@
-# 贡献指南 / Contributing
+# Contributing
 
-**简体中文** | [English](CONTRIBUTING.en.md)
+English | [简体中文](CONTRIBUTING.zh.md)
 
-感谢你愿意改进 automountd。本文说明开发环境、代码结构、测试要求与提交流程。
+Thanks for improving automountd. This guide covers the development environment, code layout, testing
+requirements, and the pull-request process.
 
-## 行为准则
+## Code of conduct
 
-参与本项目即表示你同意遵守 [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)。
+By participating you agree to follow [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md).
 
-## 开发环境
+## Development environment
 
-- Linux（真实挂载/udev 功能需要；纯逻辑测试可在 macOS/Windows 上跑）
-- Rust 1.74+（`rust-version` 在 `Cargo.toml` 中声明）
-- `util-linux`（`lsblk`、`blkid`、`mount`、`umount`）
-- 可选：`systemd/udev`、`ntfs-3g`、`exfatprogs`、`udisks2`
+- Linux (required for real mounting/udev; pure-logic tests also run on macOS/Windows)
+- Rust 1.74+ (`rust-version` in `Cargo.toml`)
+- `util-linux` (`lsblk`, `blkid`, `mount`, `umount`)
+- Optional: `systemd/udev`, `ntfs-3g`, `exfatprogs`, `udisks2`
 
 ```bash
 git clone <repo>
@@ -22,67 +23,74 @@ cargo test --all-targets
 cargo build --release
 ```
 
-## 依赖策略
+## Dependency policy
 
-本项目不再禁止第三方 crate，但依赖必须受控：
+Third-party crates are allowed, but dependencies must stay controlled:
 
-- 优先使用标准库或现有实现；能用少量安全代码解决的不引入大依赖。
-- 新增运行时依赖需在 PR 中说明：用途、替代方案、维护状态、许可证（必须与 GPL-3.0-or-later 兼容）。
-- 禁止来源不明、无人维护或与现有能力重复的 crate。
-- 同步更新 `Cargo.lock`，确保 CI 可以正常构建（CI 不再强制 `--offline`）。
-- 涉及 root 守护进程、挂载、路径处理的依赖需要额外安全审查与回归测试。
+- Prefer the standard library or an existing implementation; do not add a large dependency for something
+  a small amount of safe code can do.
+- New runtime dependencies must explain in the PR: purpose, alternatives, maintenance status, and license
+  (must be compatible with GPL-3.0-or-later).
+- Do not add unmaintained crates, crates of unknown origin, or crates that duplicate existing capabilities.
+- Update `Cargo.lock` and keep CI green (CI no longer forces `--offline`).
+- Dependencies used by the root daemon, mounting, or path handling require extra security review and
+  regression tests.
 
-当前 `[dependencies]` 为空是设计选择，不是限制。
+An empty `[dependencies]` table is a design choice, not a restriction.
 
-## 代码结构
-
-```
-src/core/     纯逻辑（配置、模型、策略、解析），不得直接执行系统命令
-src/system/   系统交互（进程、设备、挂载、fstab、状态、udev、会话）
-src/app/      服务层（daemon、ctl、inventory）
-src/ui/       表现层（cli、tui、term、logging）
-```
-
-新增模块时请放入最合适的层，并在对应 `mod.rs` 与 `src/lib.rs` 中声明。
-
-## 编码约定
-
-- `cargo fmt --all` 格式化；`cargo clippy --all-targets` 无新增警告。
-- 公共 API 使用中文文档注释；错误消息面向用户用中文，日志可中英混排。
-- 系统操作必须通过 `system::exec::CommandRunner`，便于用 `MockRunner` 测试。
-- 涉及路径、权限、挂载的改动必须补充安全测试（路径逃逸、符号链接、系统盘保护、非 root 授权）。
-- 不要提交密钥、真实设备 UUID、个人路径或 `/etc` 内容。
-- 提交前在 Linux 上至少运行一次 `cargo test --all-targets`；仅改纯逻辑时也要跑全量测试。
-
-## 提交信息
-
-推荐 [Conventional Commits](https://www.conventionalcommits.org/zh-hans/)：
+## Code layout
 
 ```
-feat: 支持按卷标挂载
-fix(ctl): 修复多行响应被截断
-docs: 补充 fstab 排障说明
-test: 增加非 root 卸载授权用例
+src/core/     pure logic (config, model, policy, parsing); no direct system calls
+src/system/   system interaction (processes, devices, mounts, fstab, state, udev, sessions)
+src/app/      service layer (daemon, ctl, inventory)
+src/ui/       presentation (cli, tui, term, logging)
 ```
 
-一次提交只做一件事；格式化/重构与行为变更分开。
+Put new modules in the right layer and declare them in the layer's `mod.rs` and `src/lib.rs`.
 
-## Pull Request 流程
+## Conventions
 
-1. Fork 仓库并从 `main` 创建分支：`feat/...`、`fix/...`、`docs/...`。
-2. 编写或更新测试，确保 `cargo test --all-targets` 全绿。
-3. 更新 `README.md` / `CHANGELOG.md`（行为变更必须写 `[Unreleased]`）。
-4. 填写 PR 模板，说明动机、实现方式、测试环境与风险。
-5. CI 通过后由维护者 review；必要时会要求补充 Linux 实机验证结果。
+- Format with `cargo fmt --all`; `cargo clippy --all-targets` must add no warnings.
+- Public APIs use English doc comments; user-facing error messages are Chinese today, logs may be mixed.
+- System operations must go through `system::exec::CommandRunner` so tests can inject `MockRunner`.
+- Changes to paths, permissions, or mounting must add security tests (path escapes, symlinks, system-disk
+  protection, non-root authorization).
+- Never commit secrets, real device UUIDs, personal paths, or contents of `/etc`.
+- Before submitting, run `cargo test --all-targets` on Linux at least once; run the full suite even for
+  pure-logic changes.
 
-## AI 辅助贡献
+## Commit messages
 
-允许使用 AI 辅助编写代码、测试或文档，但必须在 PR 中披露工具、参与范围与验证方式。
-贡献者对自己的提交负责，AI 不能替代测试、审查或 Linux 实机验证。
+Use [Conventional Commits](https://www.conventionalcommits.org/):
 
-- 完整政策与已知局限：[AI_USAGE.md](AI_USAGE.md)
-- 给 AI 编码代理的仓库规则：[AGENTS.md](AGENTS.md)
+```
+feat: support mounting by label
+fix(ctl): read multi-line responses completely
+docs: add fstab troubleshooting
+test: cover non-root unmount authorization
+```
 
-## 许可证
+One logical change per commit; keep formatting/refactoring separate from behavior changes.
 
-提交贡献即表示你同意以 [GPL-3.0-or-later](LICENSE) 授权你的贡献，并确认你有权这样做。
+## Pull requests
+
+1. Fork the repository and branch from `main`: `feat/...`, `fix/...`, `docs/...`.
+2. Add or update tests; keep `cargo test --all-targets` green.
+3. Update `README.md` / `README.zh.md` and `CHANGELOG.md` / `CHANGELOG.zh.md` for behavior changes.
+4. Fill in the PR template: motivation, approach, test environment, and risks.
+5. After CI passes, a maintainer reviews; Linux verification results may be requested.
+
+## AI-assisted contributions
+
+AI-assisted code, tests, or documentation are welcome, but the PR must disclose the tool, scope, and how
+the result was verified. Contributors remain responsible for their submissions; AI is not a substitute for
+tests, review, or Linux validation.
+
+- Full policy and limitations: [AI_USAGE.md](AI_USAGE.md)
+- Repository rules for AI coding agents: [AGENTS.md](AGENTS.md)
+
+## License
+
+By submitting a contribution you agree to license it under
+[GPL-3.0-or-later](LICENSE) and confirm you have the right to do so.

@@ -1,73 +1,83 @@
-# automountd — Linux 磁盘自动挂载守护进程
+# automountd — Linux disk auto-mount daemon
 
-**简体中文** | [English](README.en.md)
+English | [简体中文](README.zh.md)
 
 [![License: GPL-3.0-or-later](https://img.shields.io/badge/license-GPL--3.0--or--later-blue.svg)](LICENSE)
 ![Rust](https://img.shields.io/badge/rust-1.74%2B-orange.svg)
 ![Platform](https://img.shields.io/badge/platform-Linux-lightgrey.svg)
 ![Developed by deepseekv4flash](https://img.shields.io/badge/developed%20by-deepseekv4flash-blueviolet.svg)
 
-> **开发声明**：本项目由 **deepseekv4flash** 完成代码、测试与文档编写。
+> **Development notice**: this project was completed by **deepseekv4flash** (code, tests, and documentation).
 
-用 Rust 编写的 Linux 块设备自动挂载服务：插入 U 盘/移动硬盘自动挂载到 `/media/<用户>/<卷标>`，
-拔出自动卸载；支持开机挂载、`/etc/fstab` 持久化、命令行与交互式界面。
+A block-device auto-mount service for Linux written in Rust: plug in a USB stick or portable drive and it is
+mounted at `/media/<user>/<label>`; unplug it and it is unmounted. It also supports boot-time mounting,
+`/etc/fstab` persistence, a CLI, and an interactive TUI.
 
-**当前无第三方运行时依赖**：只使用 Rust 标准库和直接声明的 libc FFI，构建产物是单个二进制。
-第三方 crate 并未被禁止；新增运行时依赖需按 [依赖策略](CONTRIBUTING.md#依赖策略) 审查。
-当前 `[dependencies]` 为空是设计选择，不是限制。
+**No third-party runtime dependencies at the moment**: only the Rust standard library and directly declared
+libc FFI are used, producing a single binary. Third-party crates are not forbidden; new runtime dependencies
+must go through the [dependency policy](CONTRIBUTING.md#dependency-policy). An empty `[dependencies]` table
+is a design choice, not a restriction.
 
 ```
-     udev / 轮询                  控制 socket
-        │                            │
-        ▼                            ▼
-   ┌──────────────────────────────────────┐
-   │            事件循环（单线程）          │
-   │  去抖 → 策略判定 → 挂载/卸载 → 记录    │
-   └───────┬───────────────┬──────────────┘
-           ▼               ▼
-     mount(8)          state.tsv + 桌面通知
+     udev / polling                 control socket
+        │                               │
+        ▼                               ▼
+   ┌──────────────────────────────────────────┐
+   │          event loop (single thread)       │
+   │ debounce → policy → mount/umount → state  │
+   └──────────┬────────────────────┬───────────┘
+              ▼                    ▼
+        mount(8)          state.tsv + desktop notifications
 ```
 
-## 功能
+## Features
 
-- **热插拔**：通过 `udevadm monitor` 监听 `add`/`remove` 事件，1 秒去抖；无 udev 的容器环境自动降级为轮询。
-- **开机挂载**：服务启动时扫描已插入的设备；可选 `auto_mount_internal_disks` 挂载内置数据盘。
-- **归属桌面用户**：通过 `loginctl` 识别活动图形会话用户，`vfat/exfat/ntfs` 用 `uid/gid/umask` 把文件交给该用户。
-- **安全默认值**：
-  - 默认只自动挂载可移动/USB 设备，**系统盘永不自动挂载**；
-  - 挂载选项默认带 `nosuid,nodev`；
-  - 卷标净化、挂载点包含性检查、符号链接检查，防止路径逃逸；
-  - UUID 白名单/黑名单；
-  - 控制接口用 `SO_PEERCRED` 校验对端 uid，并受 `ctl_allowed_users` 限制；`--force` 仅 root 可用。
-- **可靠卸载**：忙碌时自动重试一次，仍失败则提示占用进程；可选 `--lazy`。lazy 卸载会跳过 `eject`/断电，
-  避免进程仍持有文件时造成数据丢失。
-- **fstab 持久化**：`automountd fstab add` 自动写入 `UUID=... <挂载点> <类型> nofail,x-systemd.device-timeout=10`，
-  备份原始文件、原子替换、拒绝写入系统目录。
-- **CLI + TUI**：`automountd list / mount / umount / status / doctor / tui`，输出按中英文宽度对齐。
-- **systemd 集成**：附带加固过的 unit，日志进 journald。
+- **Hotplug**: listens to `add`/`remove` events from `udevadm monitor` with a 1-second debounce;
+  automatically falls back to polling in containers without udev.
+- **Boot-time mounting**: scans devices already present when the service starts; optional
+  `auto_mount_internal_disks` also mounts internal data disks.
+- **Desktop ownership**: identifies the active graphical session user via `loginctl`; for
+  `vfat/exfat/ntfs`, `uid/gid/umask` are used so the files belong to that user.
+- **Safe defaults**:
+  - only removable/USB devices are auto-mounted by default, and **system disks are never auto-mounted**;
+  - mount options include `nosuid,nodev` by default;
+  - label sanitization, mount-point containment checks, and symlink checks prevent path escapes;
+  - UUID allowlist/blocklist;
+  - the control socket verifies the peer uid via `SO_PEERCRED` and is restricted by `ctl_allowed_users`;
+    `--force` is root-only.
+- **Reliable unmount**: retries once when busy and then points at the processes holding the mount;
+  `--lazy` is available. Lazy unmount skips `eject`/power-off to avoid data loss while processes still
+  hold files.
+- **fstab persistence**: `automountd fstab add` writes
+  `UUID=... <mountpoint> <fstype> nofail,x-systemd.device-timeout=10`, backs up the original file,
+  replaces it atomically, and refuses system directories.
+- **CLI + TUI**: `automountd list / mount / umount / status / doctor / tui`, with output aligned for
+  CJK and Latin widths.
+- **systemd integration**: ships a hardened unit and logs to journald.
 
-> 状态说明：仓库包含 116 个单元测试 + 6 个 CLI 集成测试；Linux 专属代码通过 `cargo check --target x86_64-unknown-linux-gnu` 交叉检查，
-> 但真实挂载动作需要在 Linux 实机上验证（开发机为 Windows，无法执行 mount 系统调用）。
+> Status: 116 unit tests + 6 CLI integration tests. Linux-only code is cross-checked with
+> `cargo check --target x86_64-unknown-linux-gnu`; real mount operations still need validation on a
+> Linux machine (the development host is Windows and cannot execute mount syscalls).
 
-## 安装
+## Installation
 
-要求：
+Requirements:
 
-- Linux（内核 4.19+ 即可；exFAT 建议 5.7+，NTFS 建议 5.15+ 使用内核 `ntfs3`）
-- Rust 1.74+（仅构建时需要）；`util-linux`、`systemd/udev`
-- 可选：`ntfs-3g`（老内核挂 NTFS）、`exfatprogs`/`exfat-fuse`、`udisks2`（`power-off` 功能）
+- Linux (kernel 4.19+ works; exFAT is best on 5.7+, NTFS on 5.15+ with the in-kernel `ntfs3` driver)
+- Rust 1.74+ (build time only); `util-linux`, `systemd/udev`
+- Optional: `ntfs-3g` (NTFS on older kernels), `exfatprogs`/`exfat-fuse`, `udisks2` (for `power-off`)
 
-一键安装：
+One-liner:
 
 ```bash
 git clone <repo> automountd && cd automountd
 sudo ./packaging/install.sh
 ```
 
-脚本会 `cargo build --release`、安装到 `/usr/local/bin/automountd`、
-生成 `/etc/automountd/config.conf`、安装并启动 `automountd.service`。
+The script runs `cargo build --release`, installs `/usr/local/bin/automountd`, creates
+`/etc/automountd/config.conf`, installs `automountd.service`, and starts it.
 
-手动安装：
+Manual installation:
 
 ```bash
 cargo build --release
@@ -78,59 +88,59 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now automountd
 ```
 
-卸载：
+Uninstall:
 
 ```bash
-sudo ./packaging/install.sh --uninstall          # 保留配置
-sudo ./packaging/install.sh --uninstall --purge  # 连配置一起删
+sudo ./packaging/install.sh --uninstall          # keep configuration
+sudo ./packaging/install.sh --uninstall --purge  # remove configuration too
 ```
 
-## 使用
+## Usage
 
 ```bash
-# 服务状态与日志
+# Service status and logs
 automountd status
 journalctl -u automountd -f
 
-# 设备列表（--all 显示未格式化/加密/被策略排除的设备）
+# Device list (--all also shows unformatted/encrypted/policy-excluded devices)
 automountd list
 automountd list --all
 
-# 手动挂载 / 卸载（非 root 会自动走守护进程）
+# Manual mount / unmount (non-root requests go through the daemon)
 automountd mount /dev/sdb1
 automountd mount UUID=1234-ABCD --read-only
-automountd umount /media/alice/U盘
+automountd umount /media/alice/USB
 
-# 让某个磁盘开机自动挂载（写入 /etc/fstab）
+# Make a disk mount automatically at boot (writes /etc/fstab)
 sudo automountd fstab add UUID=1234-ABCD
 sudo automountd fstab list
 
-# 配置
+# Configuration
 automountd config show
 automountd config path
 automountd config validate
 sudo automountd config init
 sudo automountd reload
 
-# 交互式界面
+# Interactive UI
 automountd tui
 
-# 环境自检
+# Environment check
 automountd doctor
 ```
 
-`automountd tui` 是一个行输入式界面（无需 ncurses/GTK，SSH 可用）：
+`automountd tui` is a line-oriented interface (no ncurses/GTK required; works over SSH):
 
 ```
- [1]  sdb1   U盘      exfat   28.9 GiB  可挂载   -
- [2]  sdc1   备份盘    ext4    1.8 TiB   已挂载   /media/alice/备份盘
-命令 (m <编号> 挂载, u <编号> 卸载, r 刷新, a 全部, q 退出):
+ [1]  sdb1   USB      exfat   28.9 GiB  mountable  -
+ [2]  sdc1   Backup   ext4    1.8 TiB   mounted    /media/alice/Backup
+Command (m <n> mount, u <n> unmount, r refresh, a all, q quit):
 ```
 
-### 界面语言
+### UI language
 
-CLI/TUI 跟随 `LANG` / `LC_ALL` / `AUTOMOUNTD_LANG`；未设置或无法识别时默认为英文。
-可用 `--lang` 强制切换：
+The CLI/TUI follows `LANG` / `LC_ALL` / `AUTOMOUNTD_LANG`; when unset or unrecognized it defaults to
+English. Use `--lang` to force a language:
 
 ```bash
 automountd --lang zh list
@@ -138,37 +148,37 @@ automountd --lang en status
 AUTOMOUNTD_LANG=zh automountd doctor
 ```
 
-`--lang` 必须放在子命令之前。当前英文覆盖帮助、TUI、列表/状态、doctor 与主要命令输出；
-部分来自 core/system 的详细错误消息仍在逐步翻译。
+`--lang` must appear before the subcommand. English currently covers help, the TUI, list/status,
+doctor, and the main command messages; detailed errors from `core`/`system` are still being translated.
 
-## 配置
+## Configuration
 
-默认配置文件：`/etc/automountd/config.conf`（INI 风格，支持 `#` 注释）。
-查找顺序：`--config` → 环境变量 `AUTOMOUNTD_CONFIG` → `/etc/automountd/config.conf` →
-`~/.config/automountd/config.conf` → 内置默认值。
+Default config file: `/etc/automountd/config.conf` (INI-style, `#` comments supported).
+Lookup order: `--config` → `AUTOMOUNTD_CONFIG` → `/etc/automountd/config.conf` →
+`~/.config/automountd/config.conf` → built-in defaults.
 
-完整示例见 [`examples/config.conf`](examples/config.conf)。常用项：
+See [`examples/config.conf`](examples/config.conf) for a complete example. Common options:
 
-| 配置项 | 默认值 | 说明 |
+| Option | Default | Description |
 | --- | --- | --- |
-| `mount_root` | `/media` | 挂载根目录，不能是 `/` 或系统目录 |
-| `per_user_dirs` | `true` | 挂载到 `<mount_root>/<用户名>/<卷标>` |
-| `user` | 空 | 强制指定挂载点所有者；空 = 自动识别桌面用户 |
-| `auto_mount_on_hotplug` | `true` | 插入时自动挂载 |
-| `auto_mount_on_boot` | `true` | 服务启动时挂载已插入设备 |
-| `auto_mount_internal_disks` | `false` | 是否也挂载内置磁盘（系统盘仍被保护） |
-| `allowed_uuids` | 空 | 非空时只自动挂载这些 UUID |
-| `blocked_uuids` / `blocked_labels` | 空 | 排除列表 |
-| `ignored_fstypes` | swap/LUKS/RAID… | 不自动挂载的文件系统类型 |
-| `default_mount_options` | `nosuid, nodev` | 所有挂载都会附加的选项 |
-| `retry_attempts` / `retry_delay_seconds` | `3` / `2` | 挂载失败重试 |
-| `suppress_remount_seconds` | `60` | 手动卸载后多少秒内不自动重挂 |
-| `poll_interval_seconds` | `0` | 无 udev 时的轮询间隔；0=自动 |
-| `ctl_allowed_users` | `*` | 允许通过控制接口操作的用户 |
-| `notify` | `true` | 桌面通知（notify-send） |
+| `mount_root` | `/media` | Mount root; must not be `/` or a system directory |
+| `per_user_dirs` | `true` | Mount at `<mount_root>/<username>/<label>` |
+| `user` | empty | Force mount-point owner; empty = detect the desktop user |
+| `auto_mount_on_hotplug` | `true` | Mount when a device is inserted |
+| `auto_mount_on_boot` | `true` | Mount devices present at service start |
+| `auto_mount_internal_disks` | `false` | Also mount internal disks (system disks stay protected) |
+| `allowed_uuids` | empty | If non-empty, only these UUIDs are auto-mounted |
+| `blocked_uuids` / `blocked_labels` | empty | Exclusion lists |
+| `ignored_fstypes` | swap/LUKS/RAID… | Filesystem types that are never auto-mounted |
+| `default_mount_options` | `nosuid, nodev` | Options appended to every mount |
+| `retry_attempts` / `retry_delay_seconds` | `3` / `2` | Mount retry policy |
+| `suppress_remount_seconds` | `60` | Do not auto-remount for this many seconds after a manual unmount |
+| `poll_interval_seconds` | `0` | Polling interval without udev; 0 = automatic |
+| `ctl_allowed_users` | `*` | Users allowed to operate through the control socket |
+| `notify` | `true` | Desktop notifications via notify-send |
 
-每个文件系统的挂载选项在 `[mount_options]` 中配置，支持占位符
-`{uid}`、`{gid}`、`{user}`、`{label}`：
+Filesystem-specific options live in `[mount_options]` and support the placeholders
+`{uid}`, `{gid}`, `{user}`, and `{label}`:
 
 ```ini
 [mount_options]
@@ -176,157 +186,168 @@ vfat = uid={uid}, gid={gid}, umask=0022, shortname=mixed, utf8
 exfat = uid={uid}, gid={gid}, umask=0022, iocharset=utf8
 ```
 
-### 挂载点命名
+### Mount-point naming
 
-1. 优先使用卷标，经净化：保留 Unicode 字母/数字/`.`/`-`/`_`，空白转 `_`，去掉首尾点横线，最长 48 字符；
-2. 无卷标时用 UUID 前 8 位：`disk-1234ABCD`；
-3. 目录冲突时追加 `_2`、`_3`；已存在的空目录会复用，避免反复插拔产生 `U盘_2`。
+1. Prefer the volume label, sanitized: Unicode letters/digits/`.`/`-`/`_` are kept, whitespace becomes
+   `_`, leading/trailing dots and dashes are removed, max 48 characters.
+2. Without a label, use the first 8 UUID characters: `disk-1234ABCD`.
+3. On collision append `_2`, `_3`; existing empty directories are reused to avoid `USB_2` after replugging.
 
-## 安全设计
+## Security design
 
-- **只处理块设备**：设备路径必须来自 lsblk/sysfs 且以 `/dev/` 开头；loop/RAID/LVM/加密容器默认跳过。
-- **系统盘保护**：从 `/proc/self/mountinfo` 找出 `/`、`/boot`、`/usr`、`/var`、`/etc` 所在整盘，
-  其上的分区默认拒绝自动挂载（除非 UUID 在 `allowed_uuids` 中或手动 `--force`）。
-- **挂载点约束**：目标必须位于 `mount_root` 之下，且路径组件不允许符号链接；`..` 直接拒绝。
-- **权限模型**：守护进程以 root 运行；控制 socket 权限 0666 但每个连接用 `SO_PEERCRED` 取真实 uid，
-  按 `ctl_allowed_users` 授权；`shutdown`/`reload` 仅限 root 或当前桌面用户；
-  `mount --force` 与卸载他人挂载仅 root 可用。控制请求有 64 KiB 上限、并发连接数上限与超时。
-- **不自动执行 fsck**、不自动解锁 LUKS、不修改分区表：只做挂载/卸载。
-- **fstab 写入**：先备份为 `fstab.automountd.bak`，临时文件 + rename 原子替换并 `fsync`；使用 `nofail`
-  避免设备缺席时卡住开机；拒绝把挂载点写到 `mount_root` 之外或含换行的字段。
+- **Block devices only**: device paths must come from lsblk/sysfs and start with `/dev/`;
+  loop/RAID/LVM/encrypted containers are skipped by default.
+- **System disk protection**: the whole disk containing `/`, `/boot`, `/usr`, `/var`, or `/etc`
+  (from `/proc/self/mountinfo`) is never auto-mounted unless its UUID is in `allowed_uuids` or the
+  user explicitly passes `--force`.
+- **Mount-point constraints**: the target must be under `mount_root`, path components must not be
+  symlinks, and `..` is rejected.
+- **Permission model**: the daemon runs as root. The control socket is mode 0666 but every connection
+  is checked with `SO_PEERCRED` and authorized by `ctl_allowed_users`; `shutdown`/`reload` are limited
+  to root or the current desktop user; `mount --force` and unmounting other users' mounts are root-only.
+  Control requests have a 64 KiB limit, a connection cap, and timeouts.
+- **No automatic fsck**, no LUKS unlock, no partition-table changes: mount/umount only.
+- **fstab writes**: back up to `fstab.automountd.bak`, atomically replace with temp file + rename +
+  `fsync`, use `nofail` to avoid blocking boot, and reject targets outside `mount_root` or fields
+  containing newlines.
 
-## fstab 持久化
+## fstab persistence
 
 ```bash
 sudo automountd fstab add UUID=1234-ABCD
 ```
 
-写入形如：
+Writes a line like:
 
 ```
-UUID=1234-ABCD /media/alice/U盘 exfat uid=1000,gid=1000,umask=0022,nosuid,nodev,nofail,x-systemd.device-timeout=10 0 0
+UUID=1234-ABCD /media/alice/USB exfat uid=1000,gid=1000,umask=0022,nosuid,nodev,nofail,x-systemd.device-timeout=10 0 0
 ```
 
-删除：
+Remove:
 
 ```bash
 sudo automountd fstab remove UUID=1234-ABCD
-sudo automountd fstab remove --target /media/alice/U盘
+sudo automountd fstab remove --target /media/alice/USB
 ```
 
-## 故障排查
+## Troubleshooting
 
-| 现象 | 处理 |
+| Symptom | What to do |
 | --- | --- |
-| 服务起不来 | `systemctl status automountd` / `journalctl -u automountd -n 100` |
-| 插入没反应 | `udevadm monitor --udev --subsystem-match=block` 看事件；`automountd list --all` 看策略原因 |
-| NTFS 挂载失败（脏标志） | Windows 上 `chkdsk /f`，Linux 上 `sudo ntfsfix /dev/sdXN`，或只读挂载 |
-| `unknown filesystem type` | 安装 `ntfs-3g` / `exfatprogs`；`automountd doctor` 会提示 |
-| 卸载 busy | `lsof +D <挂载点>` 或 `fuser -vm <挂载点>`；紧急用 `automountd umount --lazy` |
-| 权限不对 | 检查 `per_user_dirs`、`user`；`vfat/exfat/ntfs` 依赖 uid/gid 挂载选项 |
-| 想看会执行什么 | `automountd --dry-run mount /dev/sdb1`（服务运行时也强制本地 dry-run） |
+| Service will not start | `systemctl status automountd` / `journalctl -u automountd -n 100` |
+| Nothing happens on plug-in | `udevadm monitor --udev --subsystem-match=block`; check policy reasons with `automountd list --all` |
+| NTFS mount fails (dirty flag) | Run `chkdsk /f` on Windows, `sudo ntfsfix /dev/sdXN` on Linux, or mount read-only |
+| `unknown filesystem type` | Install `ntfs-3g` / `exfatprogs`; `automountd doctor` reports missing helpers |
+| Unmount is busy | `lsof +D <mountpoint>` or `fuser -vm <mountpoint>`; use `automountd umount --lazy` as a last resort |
+| Wrong ownership | Check `per_user_dirs`, `user`; `vfat/exfat/ntfs` rely on uid/gid mount options |
+| Want to see the command first | `automountd --dry-run mount /dev/sdb1` (forces a local dry-run even when the service is running) |
 
-退出码：`0` 成功；`1` 一般错误；`3` 服务未运行；`4` 权限不足。
+Exit codes: `0` success; `1` general error; `3` service not running; `4` permission denied.
 
-## 开发与测试
+## Development and testing
 
 ```bash
-cargo test --all-targets   # 116 个单元测试 + 6 个 CLI 集成测试
-cargo check --all-targets  # 类型检查
-cargo clippy --all-targets # 静态检查
+cargo test --all-targets   # 116 unit tests + 6 CLI integration tests
+cargo check --all-targets  # type check
+cargo clippy --all-targets # lints
 cargo build --release
 ```
 
-Linux 专属代码（Unix socket、`SO_PEERCRED`、`geteuid`/`chown`、udev 子进程）通过
-`cargo check --target x86_64-unknown-linux-gnu` 交叉类型检查；`#[cfg(unix)]` 测试需要 Linux 实机运行。
+Linux-only code (Unix socket, `SO_PEERCRED`, `geteuid`/`chown`, udev child process) is cross-checked with
+`cargo check --target x86_64-unknown-linux-gnu`; `#[cfg(unix)]` tests need a real Linux host.
 
-目录结构（按职责分层）：
+Repository layout (layered by responsibility):
 
 ```
 src/
-  main.rs               进程入口
-  lib.rs                模块声明与兼容导出
-  core/                 纯逻辑层（无系统调用，可跨平台测试）
-    config.rs           配置解析/校验/模板
-    model.rs            共享数据结构
-    error.rs            统一错误类型
-    naming.rs           卷标净化与路径安全
-    policy.rs           自动挂载策略
-    fstypes.rs          文件系统驱动与挂载选项
-    mountinfo.rs        /proc/self/mountinfo 解析
-    testutil.rs         测试辅助
-  system/               系统交互层
-    platform.rs         libc FFI / 信号 / 权限
-    exec.rs             外部命令执行抽象
-    devices.rs          lsblk/sysfs 设备发现
-    mounter.rs          挂载/卸载与挂载点管理
-    fstab.rs            /etc/fstab 编辑
-    state.rs            运行状态持久化
-    sessions.rs         桌面用户识别
-    udev.rs             udevadm 解析 / 轮询降级
-    notify.rs           桌面通知
-  app/                  服务层
-    daemon.rs           事件循环与控制命令分发
-    ctl.rs              Unix socket 协议与服务端
-    inventory.rs        设备视图快照
-  ui/                   表现层
-    cli.rs              命令行解析与子命令
-    tui.rs              交互式界面
-    i18n.rs             中英文界面文案
-    term.rs             终端格式化
-    logging.rs          日志
-packaging/              systemd unit 与安装脚本
-examples/config.conf    示例配置
-tests/cli.rs            CLI 集成测试
-.github/                CI、发布流程、Issue/PR 模板、dependabot
-CONTRIBUTING.md         贡献指南
-CONTRIBUTING.en.md      Contribution guide (English)
-SECURITY.md             安全策略
-SECURITY.en.md          Security policy (English)
-SUPPORT.md              支持说明
-SUPPORT.en.md           Support notes (English)
-CHANGELOG.md            版本变更
-CHANGELOG.en.md         Changelog (English)
-CODE_OF_CONDUCT.md      行为准则
-NOTICE                  GPL 版权与授权声明
-AGENTS.md               AI 编码代理规则
-AGENTS.en.md            Rules for AI agents (English)
-AI_USAGE.md             AI 使用披露与政策
-AI_USAGE.en.md          AI usage policy (English)
-README.en.md            English README
+  main.rs               process entry point
+  lib.rs                module declarations and compatibility re-exports
+  core/                 pure logic (no system calls; cross-platform tests)
+    config.rs           config parsing/validation/template
+    model.rs            shared data structures
+    error.rs            unified error type
+    naming.rs           label sanitization and path safety
+    policy.rs           auto-mount policy
+    fstypes.rs          filesystem drivers and mount options
+    mountinfo.rs        /proc/self/mountinfo parser
+    testutil.rs         test helpers
+  system/               system interaction
+    platform.rs         libc FFI / signals / permissions
+    exec.rs             external command abstraction
+    devices.rs          lsblk/sysfs device discovery
+    mounter.rs          mount/umount and mount-point management
+    fstab.rs            /etc/fstab editing
+    state.rs            runtime state persistence
+    sessions.rs         desktop user detection
+    udev.rs             udevadm parsing / polling fallback
+    notify.rs           desktop notifications
+  app/                  service layer
+    daemon.rs           event loop and control command dispatch
+    ctl.rs              Unix socket protocol/server
+    inventory.rs        device view snapshot
+  ui/                   presentation layer
+    cli.rs              CLI parsing and subcommands
+    tui.rs              interactive UI
+    i18n.rs             Chinese/English UI strings
+    term.rs             terminal formatting
+    logging.rs          logging
+packaging/              systemd unit and install scripts
+examples/config.conf    example configuration
+tests/cli.rs            CLI integration tests
+.github/                CI, release workflow, issue/PR templates, dependabot
+CONTRIBUTING.md         contribution guide
+CONTRIBUTING.zh.md      contribution guide (Chinese)
+SECURITY.md             security policy
+SECURITY.zh.md          security policy (Chinese)
+SUPPORT.md              support notes
+SUPPORT.zh.md           support notes (Chinese)
+CHANGELOG.md            changelog
+CHANGELOG.zh.md         changelog (Chinese)
+CODE_OF_CONDUCT.md      code of conduct
+NOTICE                  GPL copyright and attribution
+AGENTS.md               rules for AI coding agents
+AGENTS.zh.md            rules for AI coding agents (Chinese)
+AI_USAGE.md             AI usage disclosure and policy
+AI_USAGE.zh.md          AI usage disclosure and policy (Chinese)
+README.zh.md            Chinese README
 ```
 
-## 已知限制
+## Known limitations
 
-- 不自动解锁 LUKS、不组装 RAID/LVM、不处理网络文件系统。
-- 不替代 udisks2：不提供 PolicyKit 细粒度授权，也不发 desktop 托盘图标（提供 TUI）。
-- 挂载策略以“可移动/USB”为主；内置数据盘需显式开启或加入 `allowed_uuids`。
-- 单元测试覆盖解析、策略、协议和命令拼装；真实 `mount` 行为依赖内核与工具链，需在目标发行版上验证。
+- Does not unlock LUKS, assemble RAID/LVM, or handle network filesystems.
+- Not a udisks2 replacement: no PolicyKit per-action authorization and no desktop tray icon (a TUI is provided).
+- Auto-mount is geared toward removable/USB devices; internal data disks require explicit opt-in or
+  `allowed_uuids`.
+- Unit tests cover parsing, policy, protocol, and command construction; real `mount` behavior depends on
+  the kernel and tooling and must be validated on the target distribution.
 
-## AI 使用说明
+## AI usage
 
-本项目在开发中使用了 AI 辅助（DeepSeek Harness `ai_team` 多代理并行实现与多轮审查）。
-AI 产出需经过测试、静态检查与审查，不作为正确性保证；真实挂载行为仍需在 Linux 上验证。
+This project was developed with AI assistance (DeepSeek Harness `ai_team` multi-agent implementation and
+review rounds). AI output is covered by tests, static checks, and review, but is not a correctness guarantee;
+real mounting still needs Linux validation.
 
-- AI 参与范围、验证过程、已知局限与贡献者披露政策：[AI_USAGE.md](AI_USAGE.md)
-- AI 编码代理（Codex / Cursor / Copilot / Claude Code / DSH 等）的仓库规则：[AGENTS.md](AGENTS.md)
+- AI scope, verification, limitations, and contributor disclosure: [AI_USAGE.md](AI_USAGE.md)
+- Repository rules for AI coding agents (Codex / Cursor / Copilot / Claude Code / DSH): [AGENTS.md](AGENTS.md)
 
-## 参与贡献
+## Contributing
 
-- 开发环境、编码约定与 PR 流程：[CONTRIBUTING.md](CONTRIBUTING.md)
-- AI 辅助贡献的披露要求：[AI_USAGE.md](AI_USAGE.md)
-- 行为准则：[CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)
-- 漏洞报告（请勿公开披露）：[SECURITY.md](SECURITY.md)
-- 提问与支持：[SUPPORT.md](SUPPORT.md)
-- 版本变更：[CHANGELOG.md](CHANGELOG.md)
-- English documentation: [README.en.md](README.en.md)
+- Development setup, conventions, and PR flow: [CONTRIBUTING.md](CONTRIBUTING.md)
+- AI-assisted contribution disclosure: [AI_USAGE.md](AI_USAGE.md)
+- Code of conduct: [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)
+- Vulnerability reports (please do not disclose publicly): [SECURITY.md](SECURITY.md)
+- Questions and support: [SUPPORT.md](SUPPORT.md)
+- Changelog: [CHANGELOG.md](CHANGELOG.md)
 
-欢迎提交 Issue 与 Pull Request（中英文均可）；GitHub 提供中英文 Issue 模板。涉及挂载、权限、路径的改动请附 Linux 实机验证结果。
+Issues and pull requests are welcome in English or Chinese; English issue forms are provided.
+Changes touching mounting, permissions, or paths should include verification results from a real Linux machine.
 
 ## License
 
-GNU General Public License v3.0 or later（`GPL-3.0-or-later`），许可证全文见 [LICENSE](LICENSE)。
-Copyright (C) 2026 automountd contributors，完整声明见 [NOTICE](NOTICE)。
+GNU General Public License v3.0 or later (`GPL-3.0-or-later`); see [LICENSE](LICENSE) for the full text.
+Copyright (C) 2026 automountd contributors; see [NOTICE](NOTICE) for the complete notice.
 
-本项目是自由软件：你可以依据自由软件基金会发布的 GNU 通用公共许可证第 3 版（或你选择的任何更新版本）
-重新分发和/或修改它。分发时请保留许可证与版权声明，并按 GPL 要求提供对应源代码。
+This is free software: you may redistribute and/or modify it under the terms of the GNU General Public
+License as published by the Free Software Foundation, either version 3 of the License, or any later version.
+When distributing, keep the license and copyright notices and provide the corresponding source code as
+required by the GPL.

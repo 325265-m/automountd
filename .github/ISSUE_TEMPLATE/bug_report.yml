@@ -7,7 +7,7 @@ body:
     attributes:
       value: |
         感谢反馈。提交前请先搜索已有 issue，并尽量提供可复现步骤。
-        安全漏洞请不要走公开 issue，见 [SECURITY.md](../../SECURITY.md)。
+        安全漏洞请不要走公开 issue，见 [SECURITY.md](../../SECURITY.zh.md)。
 
   - type: checkboxes
     id: preflight

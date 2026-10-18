@@ -29,9 +29,9 @@ Closes #
 - [ ] Verified on a real Linux machine when touching mount/udev/permissions
       （涉及挂载/udev/权限时已在 Linux 实机验证，请注明发行版与内核）
 - [ ] Added/updated tests / 新增或更新了测试
-- [ ] Updated `README.md` / `README.en.md` and `CHANGELOG.md` / `CHANGELOG.en.md`
+- [ ] Updated `README.md` / `README.zh.md` and `CHANGELOG.md` / `CHANGELOG.zh.md`
       （更新了中英文 README 与 CHANGELOG）
-- [ ] Disclosed AI assistance if used (see `AI_USAGE.md` / `AI_USAGE.en.md`)
+- [ ] Disclosed AI assistance if used (see `AI_USAGE.md` / `AI_USAGE.zh.md`)
       （如使用 AI 辅助，已披露工具、范围与验证方式）
 
 ## Security impact / 安全影响
