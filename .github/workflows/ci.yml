@@ -4,8 +4,19 @@ on:
   push:
   pull_request:
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
 jobs:
   test:
+    name: Test (stable)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -17,6 +28,15 @@ jobs:
       - name: Clippy
         run: cargo clippy --all-targets --offline
       - name: Test
-        run: cargo test --offline
-      - name: Build
-        run: cargo build --release --offline
+        run: cargo test --all-targets --offline
+      - name: Build release
+        run: cargo build --release --locked
+
+  msrv:
+    name: MSRV (1.74)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.74.0
+      - name: Check
+        run: cargo check --all-targets --locked

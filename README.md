@@ -1,5 +1,9 @@
 # automountd — Linux 磁盘自动挂载守护进程
 
+[![License: GPL-3.0-or-later](https://img.shields.io/badge/license-GPL--3.0--or--later-blue.svg)](LICENSE)
+![Rust](https://img.shields.io/badge/rust-1.74%2B-orange.svg)
+![Platform](https://img.shields.io/badge/platform-Linux-lightgrey.svg)
+
 用 Rust 编写的 Linux 块设备自动挂载服务：插入 U 盘/移动硬盘自动挂载到 `/media/<用户>/<卷标>`，
 拔出自动卸载；支持开机挂载、`/etc/fstab` 持久化、命令行与交互式界面。
 
@@ -36,7 +40,7 @@
 - **CLI + TUI**：`automountd list / mount / umount / status / doctor / tui`，输出按中英文宽度对齐。
 - **systemd 集成**：附带加固过的 unit，日志进 journald。
 
-> 状态说明：仓库包含 114 个单元测试；Linux 专属代码通过 `cargo check --target x86_64-unknown-linux-gnu` 交叉检查，
+> 状态说明：仓库包含 114 个单元测试 + 4 个 CLI 集成测试；Linux 专属代码通过 `cargo check --target x86_64-unknown-linux-gnu` 交叉检查，
 > 但真实挂载动作需要在 Linux 实机上验证（开发机为 Windows，无法执行 mount 系统调用）。
 
 ## 安装
@@ -207,9 +211,9 @@ sudo automountd fstab remove --target /media/alice/U盘
 ## 开发与测试
 
 ```bash
-cargo test --offline          # 114 个单元测试（纯逻辑，可在非 Linux 上跑）
-cargo check --all-targets     # 类型检查
-cargo clippy --all-targets    # 静态检查
+cargo test --all-targets --offline   # 114 个单元测试 + 4 个 CLI 集成测试
+cargo check --all-targets            # 类型检查
+cargo clippy --all-targets           # 静态检查
 cargo build --release --offline
 ```
 
@@ -252,6 +256,14 @@ src/
     logging.rs          日志
 packaging/              systemd unit 与安装脚本
 examples/config.conf    示例配置
+tests/cli.rs            CLI 集成测试
+.github/                CI、发布流程、Issue/PR 模板、dependabot
+CONTRIBUTING.md         贡献指南
+CODE_OF_CONDUCT.md      行为准则
+SECURITY.md             安全策略
+SUPPORT.md              支持说明
+CHANGELOG.md            版本变更
+NOTICE                  GPL 版权与授权声明
 ```
 
 ## 已知限制
@@ -261,9 +273,20 @@ examples/config.conf    示例配置
 - 挂载策略以“可移动/USB”为主；内置数据盘需显式开启或加入 `allowed_uuids`。
 - 单元测试覆盖解析、策略、协议和命令拼装；真实 `mount` 行为依赖内核与工具链，需在目标发行版上验证。
 
+## 参与贡献
+
+- 开发环境、编码约定与 PR 流程：[CONTRIBUTING.md](CONTRIBUTING.md)
+- 行为准则：[CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)
+- 漏洞报告（请勿公开披露）：[SECURITY.md](SECURITY.md)
+- 提问与支持：[SUPPORT.md](SUPPORT.md)
+- 版本变更：[CHANGELOG.md](CHANGELOG.md)
+
+欢迎提交 Issue 与 Pull Request；涉及挂载、权限、路径的改动请附 Linux 实机验证结果。
+
 ## License
 
 GNU General Public License v3.0 or later（`GPL-3.0-or-later`），许可证全文见 [LICENSE](LICENSE)。
+Copyright (C) 2026 automountd contributors，完整声明见 [NOTICE](NOTICE)。
 
 本项目是自由软件：你可以依据自由软件基金会发布的 GNU 通用公共许可证第 3 版（或你选择的任何更新版本）
 重新分发和/或修改它。分发时请保留许可证与版权声明，并按 GPL 要求提供对应源代码。

@@ -1,0 +1,87 @@
+name: Bug 报告
+description: 报告可复现的缺陷或异常行为
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢反馈。提交前请先搜索已有 issue，并尽量提供可复现步骤。
+        安全漏洞请不要走公开 issue，见 [SECURITY.md](../../SECURITY.md)。
+
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: 提交前确认
+      options:
+        - label: 我已搜索现有 issue，确认不是重复问题
+          required: true
+        - label: 这不是安全漏洞（安全漏洞请走私密报告）
+          required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: automountd 版本
+      description: 运行 `automountd --version` 的输出
+      placeholder: "automountd 1.0.0"
+    validations:
+      required: true
+
+  - type: input
+    id: environment
+    attributes:
+      label: 系统环境
+      description: 发行版、内核版本、文件系统、桌面环境
+      placeholder: "Ubuntu 24.04 / 6.8.0 / exfat / GNOME 46"
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: 复现步骤
+      placeholder: |
+        1. 插入 U 盘 ...
+        2. 执行 automountd list --all ...
+        3. 观察到 ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: 期望行为
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: 实际行为
+    validations:
+      required: true
+
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: 诊断信息
+      description: 请粘贴 `automountd doctor`、`automountd status`、`automountd list --all` 与相关日志
+      render: shell
+      placeholder: |
+        $ automountd doctor
+        ...
+
+        $ journalctl -u automountd -n 100 --no-pager
+        ...
+    validations:
+      required: false
+
+  - type: textarea
+    id: config
+    attributes:
+      label: 配置片段
+      description: 若修改过配置，请粘贴相关部分（删除 UUID 等敏感信息）
+      render: ini
+    validations:
+      required: false

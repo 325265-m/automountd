@@ -1,4 +1,8 @@
 /target
+**/*.rs.bk
+*.pdb
 *.swp
 *.tmp
+.idea/
+.vscode/
 .DS_Store
