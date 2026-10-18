@@ -5,8 +5,10 @@
 
 ## 摘要
 
+- **本项目由 `deepseekv4flash` 完成**：代码、测试与文档通过 DeepSeek Harness 的 `ai_team` 多代理编排生成，
+  人类维护者负责需求、验收与发布决策。
 - 项目在开发中使用了 **DeepSeek Harness 的 `ai_team` 多代理编排**：多个 AI worker 并行实现模块，另有多轮独立审查。
-- 架构、模块契约、集成、修复与最终验证由主代理完成；AI 产出不是“直接合并”的。
+- 架构、模块契约、集成、修复与最终验证由主代理（`deepseekv4flash`）完成；AI 产出不是“直接合并”的。
 - 所有代码经过：单元测试、CLI 集成测试、`clippy`、格式检查、Linux target 交叉类型检查与 Release 构建。
 - 开发机为 Windows，**真实 `mount`/udev 热插拔未在本机执行**；Linux 运行期行为仍需在目标发行版上人工验证。
 

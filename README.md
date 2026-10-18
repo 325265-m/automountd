@@ -3,6 +3,9 @@
 [![License: GPL-3.0-or-later](https://img.shields.io/badge/license-GPL--3.0--or--later-blue.svg)](LICENSE)
 ![Rust](https://img.shields.io/badge/rust-1.74%2B-orange.svg)
 ![Platform](https://img.shields.io/badge/platform-Linux-lightgrey.svg)
+![Developed by deepseekv4flash](https://img.shields.io/badge/developed%20by-deepseekv4flash-blueviolet.svg)
+
+> **开发声明**：本项目由 **deepseekv4flash** 完成代码、测试与文档编写。
 
 用 Rust 编写的 Linux 块设备自动挂载服务：插入 U 盘/移动硬盘自动挂载到 `/media/<用户>/<卷标>`，
 拔出自动卸载；支持开机挂载、`/etc/fstab` 持久化、命令行与交互式界面。
