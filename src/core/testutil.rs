@@ -6,6 +6,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 static COUNTER: AtomicU64 = AtomicU64::new(0);
 
 /// 自动清理的临时目录。
+///
+/// 默认放系统临时目录；如果运行环境禁止子进程写系统 temp（例如受限沙箱），
+/// 自动退回到项目内的 `target/test-tmp`，保证测试可重复运行。
 pub struct TempDir {
     path: PathBuf,
 }
@@ -17,9 +20,26 @@ impl TempDir {
             std::process::id(),
             COUNTER.fetch_add(1, Ordering::SeqCst)
         );
-        let path = std::env::temp_dir().join(unique);
-        std::fs::create_dir_all(&path).expect("创建临时目录失败");
-        Self { path }
+        let system_candidate = std::env::temp_dir().join(&unique);
+        let workspace_candidate = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("target")
+            .join("test-tmp")
+            .join(&unique);
+
+        let mut last_error = None;
+        for path in [system_candidate, workspace_candidate] {
+            match std::fs::create_dir_all(&path) {
+                Ok(()) => return Self { path },
+                Err(err) => last_error = Some((path, err)),
+            }
+        }
+
+        let (path, err) = last_error.expect("至少应尝试一个临时目录");
+        panic!(
+            "创建临时目录失败 {}（系统 temp={:?}）: {err}",
+            path.display(),
+            std::env::temp_dir()
+        );
     }
 
     pub fn path(&self) -> &Path {
