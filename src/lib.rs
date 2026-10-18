@@ -7,37 +7,29 @@
 //! * 非 root 用户通过 Unix socket 控制守护进程，挂载点归属当前桌面用户；
 //! * 默认拒绝系统盘、`nosuid,nodev`、卷标净化、路径符号链接检查。
 //!
-//! 模块分层：纯逻辑（config/naming/policy/mountinfo 解析）不触碰系统状态，
-//! 系统操作集中在 `mounter`、`state`、`platform`，便于测试。
+//! 源码按职责分层：
+//!
+//! ```text
+//! core/    纯逻辑：配置、模型、策略、解析（可在任意平台测试）
+//! system/  系统交互：设备、挂载、fstab、状态、udev、会话
+//! app/     服务层：守护进程、控制接口、设备视图
+//! ui/      表现层：CLI、TUI、终端、日志
+//! ```
+//!
+//! 为兼容旧代码，模块同时在 crate 根路径导出（例如 `crate::config`）。
 
 // 测试里大量使用 `let mut config = Config::default(); config.x = ...` 的写法。
 #![allow(clippy::field_reassign_with_default)]
 
-pub mod cli;
-pub mod config;
-pub mod ctl;
-pub mod daemon;
-pub mod devices;
-pub mod error;
-pub mod exec;
-pub mod fstab;
-pub mod fstypes;
-pub mod inventory;
-pub mod logging;
-pub mod model;
-pub mod mounter;
-pub mod mountinfo;
-pub mod naming;
-pub mod notify;
-pub mod platform;
-pub mod policy;
-pub mod sessions;
-pub mod state;
-pub mod term;
-pub mod tui;
-pub mod udev;
+pub mod app;
+pub mod core;
+pub mod system;
+pub mod ui;
+
+// 兼容旧路径：crate::config / crate::daemon / crate::mounter ...
+pub use app::{ctl, daemon, inventory};
+pub use core::{config, error, fstypes, model, mountinfo, naming, policy, testutil};
+pub use system::{devices, exec, fstab, mounter, notify, platform, sessions, state, udev};
+pub use ui::{cli, logging, term, tui};
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
-
-#[doc(hidden)]
-pub mod testutil;

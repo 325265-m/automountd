@@ -216,29 +216,42 @@ cargo build --release --offline
 Linux 专属代码（Unix socket、`SO_PEERCRED`、`geteuid`/`chown`、udev 子进程）通过
 `cargo check --target x86_64-unknown-linux-gnu` 交叉类型检查；`#[cfg(unix)]` 测试需要 Linux 实机运行。
 
-目录结构：
+目录结构（按职责分层）：
 
 ```
 src/
-  main.rs cli.rs        CLI 解析与子命令
-  daemon.rs             事件循环、控制命令处理
-  udev.rs               udevadm 解析 / 轮询降级
-  devices.rs            设备发现（手写 JSON 解析 lsblk）
-  mountinfo.rs          /proc/self/mountinfo
-  policy.rs            自动挂载策略
-  mounter.rs            挂载/卸载、挂载点管理
-  fstypes.rs            驱动选择与挂载选项
-  fstab.rs              /etc/fstab 编辑
-  state.rs              运行状态持久化
-  ctl.rs                Unix socket 协议与服务端
-  sessions.rs           桌面用户识别
-  notify.rs             桌面通知
-  tui.rs                交互式界面
-  config.rs             配置解析/校验/模板
-  exec.rs platform.rs   进程执行与平台 FFI
-  naming.rs term.rs     命名/终端输出
-packaging/               systemd unit 与安装脚本
-examples/config.conf     示例配置
+  main.rs               进程入口
+  lib.rs                模块声明与兼容导出
+  core/                 纯逻辑层（无系统调用，可跨平台测试）
+    config.rs           配置解析/校验/模板
+    model.rs            共享数据结构
+    error.rs            统一错误类型
+    naming.rs           卷标净化与路径安全
+    policy.rs           自动挂载策略
+    fstypes.rs          文件系统驱动与挂载选项
+    mountinfo.rs        /proc/self/mountinfo 解析
+    testutil.rs         测试辅助
+  system/               系统交互层
+    platform.rs         libc FFI / 信号 / 权限
+    exec.rs             外部命令执行抽象
+    devices.rs          lsblk/sysfs 设备发现
+    mounter.rs          挂载/卸载与挂载点管理
+    fstab.rs            /etc/fstab 编辑
+    state.rs            运行状态持久化
+    sessions.rs         桌面用户识别
+    udev.rs             udevadm 解析 / 轮询降级
+    notify.rs           桌面通知
+  app/                  服务层
+    daemon.rs           事件循环与控制命令分发
+    ctl.rs              Unix socket 协议与服务端
+    inventory.rs        设备视图快照
+  ui/                   表现层
+    cli.rs              命令行解析与子命令
+    tui.rs              交互式界面
+    term.rs             终端格式化
+    logging.rs          日志
+packaging/              systemd unit 与安装脚本
+examples/config.conf    示例配置
 ```
 
 ## 已知限制
