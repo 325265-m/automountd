@@ -1,10 +1,11 @@
-//! 守护进程：udev 事件循环、开机挂载、控制接口。
+//! Daemon: udev event loop, boot-time mounting, control interface.
 //!
-//! 单线程事件循环 + 三个后台生产者：
+//! A single-threaded event loop fed by three background producers:
 //!
-//! * `udevadm monitor`（或轮询）线程把 [`UdevEvent`] 送进 channel；
-//! * [`CtlServer`] 把每个控制连接包装成 [`CtlJob`] 送进另一个 channel；
-//! * 主循环去抖、串行执行挂载/卸载，避免并发操作互相踩踏。
+//! * the `udevadm monitor` (or polling) thread pushes [`UdevEvent`]s into a channel;
+//! * [`CtlServer`] wraps every control connection as a [`CtlJob`] into another channel;
+//! * the main loop debounces and runs mounts/unmounts serially, so concurrent
+//!   operations cannot step on each other.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -51,7 +52,8 @@ pub struct Daemon {
     last_reconcile: Instant,
     last_error_notice: HashMap<String, Instant>,
     started_at: u64,
-    /// reload 后需要补一次全量扫描；放在事件循环里做，避免控制请求被挂载操作拖死。
+    /// After a reload one full scan must be caught up on; it runs inside the event loop
+    /// so a control request cannot be starved by mount operations.
     pending_reconcile: bool,
 }
 
@@ -84,7 +86,7 @@ impl Daemon {
         })
     }
 
-    /// 阻塞运行直到收到 SIGTERM/SIGINT 或控制命令 shutdown。
+    /// Run blocking until SIGTERM/SIGINT arrives or the control command shutdown is issued.
     pub fn run(&mut self) -> Result<()> {
         platform::reset_stop();
         platform::install_signal_handlers()?;
@@ -127,7 +129,7 @@ impl Daemon {
         platform::request_stop();
     }
 
-    // ------------------------------------------------------------------ 启动
+    // ------------------------------------------------------------------ startup
     fn spawn_monitor(&mut self) -> Result<()> {
         match UdevMonitor::spawn(&*self.runner, self.event_tx.clone()) {
             Ok(monitor) => {
@@ -153,7 +155,8 @@ impl Daemon {
         self.state.save()
     }
 
-    /// 清掉已经不在挂载表里的旧记录（例如重启或设备被拔出）。
+    /// Drop stale records that are no longer in the mount table (e.g. after a reboot
+    /// or when a device was unplugged).
     fn prune_state(&mut self) {
         let mounts = mountinfo::read_mountinfo();
         let stale: Vec<String> = self
@@ -168,7 +171,7 @@ impl Daemon {
         }
     }
 
-    // ------------------------------------------------------------------ 循环
+    // ------------------------------------------------------------------ loop
     fn event_loop(&mut self) -> Result<()> {
         loop {
             if self.should_stop() {
@@ -212,7 +215,7 @@ impl Daemon {
         platform::stop_requested() || self.stop.load(Ordering::SeqCst)
     }
 
-    /// 收集一小段去抖窗口内的事件。
+    /// Collect the events that arrive within a short debounce window.
     fn collect_batch(&mut self, first: UdevEvent) -> Vec<UdevEvent> {
         let mut batch = vec![first];
         let window = self.config.debounce_seconds.clamp(0.0, 5.0);
@@ -338,7 +341,8 @@ impl Daemon {
                         "设备 {} 已移除，但正常卸载 {} 失败（{err}），尝试 lazy 卸载",
                         record.device, record.target
                     ));
-                    // 设备已经物理消失，lazy 卸载可以安全地把残留挂载从命名空间分离。
+                    // The device has physically disappeared, so a lazy unmount can safely
+                    // detach the leftover mount from the namespace.
                     match self.manager.unmount(&record.target, true, false, false) {
                         Ok(target) => logging::info(format!("已 lazy 卸载 {target}")),
                         Err(lazy_err) => logging::warn(format!(
@@ -441,7 +445,7 @@ impl Daemon {
         notify::notify_error(&self.config, &*self.runner, "磁盘挂载失败", &detail, user);
     }
 
-    /// 开机挂载或定期扫描遗漏的设备。
+    /// Mount at boot, or scan for devices missed by earlier periodic scans.
     fn reconcile(&mut self, boot: bool) {
         if boot && !self.config.auto_mount_on_boot {
             logging::info("auto_mount_on_boot 已关闭，跳过开机挂载");
@@ -481,7 +485,7 @@ impl Daemon {
         self.known = all.iter().map(|device| device.name.clone()).collect();
     }
 
-    // ------------------------------------------------------------------ 用户
+    // ------------------------------------------------------------------ user
     fn current_user(&mut self) -> Option<UserInfo> {
         let now = Instant::now();
         if let Some((cached, at)) = &self.user_cache {
@@ -516,7 +520,7 @@ impl Daemon {
         }
     }
 
-    // ------------------------------------------------------------------ 控制
+    // ------------------------------------------------------------------ control
     fn drain_jobs(&mut self) {
         while let Ok(job) = self.jobs.try_recv() {
             let response = self.dispatch(&job.request, job.peer_uid);
@@ -815,8 +819,10 @@ impl Daemon {
         self.manager = MountManager::new(self.config.clone(), self.runner.clone());
         self.state.dry_run = self.config.dry_run;
         self.user_cache = None;
-        // 配置可能放行了新的设备/内置盘：清空已知集合，让事件循环下一轮补一次
-        // 全量扫描。不要在这个控制请求里同步挂载——慢盘会让 CLI 超时并阻塞 status。
+        // The config may now allow new devices or internal disks: clear the known set so
+        // the event loop catches up with one full scan on its next round. Do not mount
+        // synchronously inside this control request -- a slow disk would make the CLI time
+        // out and block status.
         self.known.clear();
         self.pending_reconcile = true;
         let job_timeout = self
@@ -893,7 +899,7 @@ fn kind_code(kind: ErrorKind) -> &'static str {
     }
 }
 
-/// 供 CLI 判断“这个错误是否值得重试”。
+/// Lets the CLI decide whether this error is worth retrying.
 pub fn should_retry(err: &Error) -> bool {
     is_retryable(err)
 }

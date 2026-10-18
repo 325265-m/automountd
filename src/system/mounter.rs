@@ -1,7 +1,8 @@
-//! 挂载与卸载核心。
+//! Core of mounting and unmounting.
 //!
-//! 所有系统交互都通过 [`CommandRunner`]（测试中替换为 [`crate::exec::MockRunner`]），
-//! 因此挂载计划的拼装、挂载点的选择、错误诊断都可以在非 Linux 开发机上验证。
+//! Every system interaction goes through [`CommandRunner`] (replaced by
+//! [`crate::exec::MockRunner`] in tests), so mount plan assembly, mount point
+//! selection and error diagnosis can all be verified on a non-Linux dev machine.
 
 use std::collections::HashSet;
 use std::fs;
@@ -19,23 +20,24 @@ use crate::mountinfo;
 use crate::naming;
 use crate::platform;
 
-/// 挂载成功后等待内核把记录写进 mountinfo 的最长时间。
+/// Maximum time to wait for the kernel to record a successful mount in mountinfo.
 const MOUNT_CONFIRM_TIMEOUT: Duration = Duration::from_secs(3);
-/// 卸载后等待挂载记录消失的最长时间。
+/// Maximum time to wait for the mount record to disappear after unmounting.
 const UNMOUNT_CONFIRM_TIMEOUT: Duration = Duration::from_secs(2);
-/// 轮询 mountinfo 的间隔。
+/// Poll interval for mountinfo.
 const CONFIRM_POLL_INTERVAL: Duration = Duration::from_millis(100);
 
-/// 执行挂载/卸载，并维护挂载点目录。
+/// Performs mounts/unmounts and maintains mount point directories.
 pub struct MountManager {
     config: Config,
     runner: Arc<dyn CommandRunner>,
     dry_run: bool,
     supported: HashSet<String>,
     planned: Vec<Vec<String>>,
-    /// 本次进程中由本管理器创建的目录；卸载/失败清理只删这些，避免误删管理员预建目录。
+    /// Directories created by this manager during this process; unmount/failure cleanup
+    /// only removes these, so pre-created admin directories are never deleted by mistake.
     created_dirs: HashSet<PathBuf>,
-    /// 仅供测试注入 mountinfo（真实运行时为 None，直接读 `/proc/self/mountinfo`）。
+    /// Only used by tests to inject mountinfo (None in real runs, which read `/proc/self/mountinfo`).
     mounts_override: Option<Vec<MountEntry>>,
 }
 
@@ -71,9 +73,10 @@ impl MountManager {
         self.dry_run = dry_run;
     }
 
-    /// 挂载根目录（含 per-user 子目录）。
+    /// Mount root directory (including the per-user subdirectory).
     pub fn base_dir(&self, user: Option<&UserInfo>) -> PathBuf {
-        // 固定到真实路径，避免 mount_root 是符号链接时包含性检查与 mount 落点不一致。
+        // Pin to the real path so the containment check and the actual mount location
+        // agree when mount_root is a symlink.
         let mut base = canonicalize_root(&self.config.mount_root);
         if self.config.per_user_dirs {
             if let Some(user) = user {
@@ -84,7 +87,7 @@ impl MountManager {
         base
     }
 
-    /// 计算挂载点：复用已存在的空目录，避免产生 `卷标_2`。
+    /// Compute the mount point: reuse an existing empty directory instead of creating `<label>_2`.
     pub fn target_path(
         &self,
         device: &BlockDevice,
@@ -111,7 +114,7 @@ impl MountManager {
         Ok(target)
     }
 
-    /// 生成挂载计划（不执行副作用），供 dry-run 与测试使用。
+    /// Build a mount plan (no side effects), used by dry-run and tests.
     pub fn plan(
         &self,
         device: &BlockDevice,
@@ -217,14 +220,15 @@ impl MountManager {
             self.created_dirs.insert(base.clone());
         }
         let target_existed = plan.target.exists();
-        // 用 canonical 后的 mount_root 做前缀，避免 mount_root 本身是符号链接时误判。
+        // Use the canonical mount_root as the prefix so a symlinked mount_root is not misjudged.
         let canonical_root = canonicalize_root(&self.config.mount_root);
         naming::check_no_symlink_components(&canonical_root, &plan.target)?;
         ensure_dir(&plan.target)?;
         if !target_existed {
             self.created_dirs.insert(plan.target.clone());
         }
-        // 在 mount 之前固定预期真实路径，挂载后再核对，封堵“检查后替换成符号链接”的竞态。
+        // Pin the expected real path before mounting and re-check it afterwards, closing the
+        // "swap in a symlink after the check" race.
         let expected_target = canonicalize_root(&plan.target);
 
         if let Some(user) = user {
@@ -270,8 +274,9 @@ impl MountManager {
                 return Err(err);
             }
         };
-        // NTFS 的两种驱动：内核 ntfs3 可能只是未加载的模块（不在 /proc/filesystems 里），
-        // 反过来老内核也可能只装了 ntfs-3g。失败时自动换另一个驱动再试一次。
+        // The two NTFS drivers: the in-kernel ntfs3 may just be an unloaded module (and thus
+        // absent from /proc/filesystems), while conversely an old kernel may only have ntfs-3g.
+        // On failure, retry once with the other driver automatically.
         if !output.ok() && is_unknown_filesystem(&output.stderr) {
             let alternative = match driver.as_str() {
                 "ntfs3" => Some("ntfs-3g"),
@@ -316,7 +321,8 @@ impl MountManager {
             );
         }
 
-        // 防御符号链接竞态：确认内核实际挂载的位置就是 mount 前固定的真实目录。
+        // Guard against the symlink race: confirm the kernel really mounted on the directory
+        // pinned before mount.
         let expected = mountinfo::normalize_path(&expected_target.display().to_string());
         let actual = mountinfo::find_mount(&self.current_mounts(), Some(&target_text), None)
             .map(|entry| mountinfo::normalize_path(&entry.target));
@@ -363,7 +369,7 @@ impl MountManager {
         )
     }
 
-    /// 卸载指定挂载点，返回被卸载的挂载点。
+    /// Unmount the given mount point and return the unmounted target.
     pub fn unmount(
         &mut self,
         target: &str,
@@ -459,7 +465,7 @@ impl MountManager {
         Ok(mounted_target)
     }
 
-    /// 按设备路径卸载（取第一个挂载点）。
+    /// Unmount by device path (using the first mount point).
     pub fn unmount_device(
         &mut self,
         device_path: &str,
@@ -500,7 +506,7 @@ impl MountManager {
         }
     }
 
-    /// 已存在的空目录可以复用，避免每次插拔都产生 `卷标_2`。
+    /// An existing empty directory can be reused, so a new `<label>_2` is not created on every replug.
     fn can_reuse_dir(&self, candidate: &Path, reserved: &HashSet<String>) -> bool {
         if candidate.is_symlink() || !candidate.is_dir() {
             return false;
@@ -511,7 +517,7 @@ impl MountManager {
         dir_is_empty(candidate)
     }
 
-    /// 保证挂载点位于挂载根目录之内，且路径上没有符号链接。
+    /// Ensure the mount point stays inside the mount root and that no component of the path is a symlink.
     fn validate_target(&self, base: &Path, target: &Path) -> Result<()> {
         if base.exists() {
             naming::safe_target(base, target)?;
@@ -532,7 +538,7 @@ impl MountManager {
         Ok(())
     }
 
-    /// 轮询 mountinfo，确认挂载表已经变化。
+    /// Poll mountinfo until the mount table reflects the change.
     fn wait_until(&self, action: &str, target: &str, limit: Duration, want_mounted: bool) -> bool {
         let started = Instant::now();
         loop {
@@ -552,7 +558,7 @@ impl MountManager {
         }
     }
 
-    /// 只清理本次由本管理器创建的、位于 mount_root 之下的空目录。
+    /// Remove only the empty directories created by this manager and located under mount_root.
     fn cleanup_empty_dirs(&mut self, target: &Path) {
         let root = canonicalize_root(&self.config.mount_root);
         let Ok(target_abs) = absolute_path(target) else {
@@ -581,7 +587,8 @@ impl MountManager {
         }
     }
 
-    /// 可选动作（eject / 断电）失败只记录警告，不影响卸载结果。
+    /// A failed optional action (eject / power-off) is only logged as a warning and does not
+    /// affect the unmount result.
     fn try_optional(&self, program: &str, args: &[&str], purpose: &str) {
         if !self.runner.which(program) {
             warn(format!("未找到 {program}，跳过{purpose}"));
@@ -607,7 +614,7 @@ impl MountManager {
     }
 }
 
-/// 根据 mount/umount 的 stderr 给出中文排查建议。
+/// Turn mount/umount stderr into a troubleshooting hint.
 pub fn diagnose(stderr: &str) -> Option<&'static str> {
     let text = stderr.to_ascii_lowercase();
     let has = |needle: &str| text.contains(needle);
@@ -663,7 +670,7 @@ fn absolute_path(path: &Path) -> Result<PathBuf> {
     Ok(cwd.join(path))
 }
 
-/// canonicalize 挂载根目录；Windows 上去掉 `\\?\` 前缀，便于与其他路径比较。
+/// Canonicalize the mount root; on Windows the `\\?\` prefix is stripped so it compares cleanly with other paths.
 fn canonicalize_root(path: &Path) -> PathBuf {
     match std::fs::canonicalize(path) {
         Ok(canonical) => {
@@ -688,7 +695,8 @@ fn ensure_dir(path: &Path) -> Result<()> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        // 不跟随符号链接 chmod：目录被替换成链接时保持原状，交给后续检查报错。
+        // Do not chmod through a symlink: if the directory was swapped for a link, leave it
+        // as is and let the subsequent checks report the problem.
         if let Ok(metadata) = fs::symlink_metadata(path) {
             if metadata.file_type().is_dir() {
                 let _ = fs::set_permissions(path, fs::Permissions::from_mode(0o755));
@@ -698,7 +706,7 @@ fn ensure_dir(path: &Path) -> Result<()> {
     Ok(())
 }
 
-/// mount(8) 报“内核不认识这个类型”时，通常意味着要换 NTFS 驱动。
+/// When mount(8) says "unknown filesystem type", it usually means the NTFS driver has to be switched.
 fn is_unknown_filesystem(stderr: &str) -> bool {
     let stderr = stderr.to_ascii_lowercase();
     stderr.contains("unknown filesystem type")
@@ -812,7 +820,7 @@ mod tests {
         assert!(options.contains(&"rw"), "缺少 rw: {options:?}");
         assert_eq!(argv[5], "/dev/sdb1");
         assert!(argv[6].ends_with("USB_DISK"));
-        // dry-run 不应该真的调用 mount
+        // dry-run must not actually invoke mount
         assert!(!runner.called("mount"));
         assert!(manager.dry_run());
     }
@@ -833,14 +841,14 @@ mod tests {
             base.join("USB_DISK")
         );
 
-        // 目录非空 -> 不能再复用
+        // non-empty directory -> cannot be reused
         std::fs::write(base.join("USB_DISK").join("data.txt"), "x").unwrap();
         assert_eq!(
             manager.target_path(&device, Some(&user), &[]).unwrap(),
             base.join("USB_DISK_2")
         );
 
-        // 目录已经是别人的挂载点 -> 也不能复用
+        // directory is already someone else's mount point -> also not reusable
         let mounts = vec![mount_entry(
             "/dev/sdz1",
             &base.join("USB_DISK").display().to_string(),
@@ -886,7 +894,7 @@ mod tests {
         match manager.mount(&device, None, false, &[]) {
             Ok(result) => panic!("应当失败，却返回 {result:?}"),
             Err(err) if err.kind == ErrorKind::Permission => {
-                // 非 root 环境会在 require_root 处提前返回，跳过断言
+                // A non-root environment returns early at require_root, so skip the assertions
             }
             Err(err) => {
                 assert_eq!(err.kind, ErrorKind::Mount, "{}", err.message);
@@ -1008,7 +1016,7 @@ mod tests {
             err.message
         );
 
-        // iso9660 默认只读
+        // iso9660 is read-only by default
         let iso = test_device("sr0", Some("iso9660"), Some("光盘"));
         let plan = manager
             .plan(&iso, Some(&test_user()), false, &[], &[])

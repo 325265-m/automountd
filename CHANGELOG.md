@@ -22,6 +22,8 @@
 
 ### Changed
 
+- 源码注释、示例配置注释、安装脚本与 systemd 元数据全部英文化；CLI/TUI 在语言环境未设置时默认英文，
+  中文可通过 `--lang zh` / `LANG=zh_CN` 启用。
 - 移除“零第三方依赖”的硬性约束，改为受控的依赖审查策略；当前 `[dependencies]` 仍为空。
 - CI、Makefile、安装脚本与文档不再强制 `--offline`，以便未来引入经审查的 crate。
 - CLI `--version` 的“零第三方依赖”文案改为“当前无第三方运行时依赖”。

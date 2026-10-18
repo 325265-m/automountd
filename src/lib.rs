@@ -1,24 +1,29 @@
-//! automountd —— Linux 磁盘自动挂载守护进程。
+//! automountd — a Linux daemon for automatic disk mounting.
 //!
-//! 设计目标：
+//! Design goals:
 //!
-//! * 当前不引入第三方运行时 crate（直接声明所需的 libc FFI）；依赖并非禁止，新增依赖需审查；
-//! * 守护进程以 root 运行，通过 udev 事件热插拔挂载，支持开机挂载与 fstab 持久化；
-//! * 非 root 用户通过 Unix socket 控制守护进程，挂载点归属当前桌面用户；
-//! * 默认拒绝系统盘、`nosuid,nodev`、卷标净化、路径符号链接检查。
+//! * No third-party runtime crates for now (the required libc FFI is declared directly); dependencies
+//!   are not forbidden, but new ones must be reviewed;
+//! * The daemon runs as root, mounts on hotplug through udev events, and supports mounting at boot
+//!   as well as fstab persistence;
+//! * Non-root users control the daemon through a Unix socket, and mount points belong to the current
+//!   desktop user;
+//! * System disks are refused by default, along with `nosuid,nodev`, label sanitization, and symlink
+//!   checks on paths.
 //!
-//! 源码按职责分层：
+//! The source is layered by responsibility:
 //!
 //! ```text
-//! core/    纯逻辑：配置、模型、策略、解析（可在任意平台测试）
-//! system/  系统交互：设备、挂载、fstab、状态、udev、会话
-//! app/     服务层：守护进程、控制接口、设备视图
-//! ui/      表现层：CLI、TUI、终端、日志
+//! core/    pure logic: config, model, policy, parsing (testable on any platform)
+//! system/  system interaction: devices, mounting, fstab, state, udev, sessions
+//! app/     service layer: daemon, control interface, device views
+//! ui/      presentation layer: CLI, TUI, terminal, logging
 //! ```
 //!
-//! 为兼容旧代码，模块同时在 crate 根路径导出（例如 `crate::config`）。
+//! For compatibility with older code, modules are also re-exported at the crate root (for example
+//! `crate::config`).
 
-// 测试里大量使用 `let mut config = Config::default(); config.x = ...` 的写法。
+// Tests rely heavily on the `let mut config = Config::default(); config.x = ...` pattern.
 #![allow(clippy::field_reassign_with_default)]
 
 pub mod app;
@@ -26,7 +31,7 @@ pub mod core;
 pub mod system;
 pub mod ui;
 
-// 兼容旧路径：crate::config / crate::daemon / crate::mounter ...
+// Legacy paths: crate::config / crate::daemon / crate::mounter ...
 pub use app::{ctl, daemon, inventory};
 pub use core::{config, error, fstypes, model, mountinfo, naming, policy, testutil};
 pub use system::{devices, exec, fstab, mounter, notify, platform, sessions, state, udev};

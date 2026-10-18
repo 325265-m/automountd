@@ -1,4 +1,4 @@
-//! 命令行集成测试：直接运行编译出的 `automountd` 二进制。
+//! Command-line integration tests: run the compiled `automountd` binary directly.
 
 use std::fs;
 use std::process::Command;
@@ -74,7 +74,8 @@ fn config_init_and_validate_roundtrip() {
 
 #[test]
 fn list_all_succeeds_without_devices() {
-    // 开发机/CI 可能没有任何块设备，也可能有；这里只要求命令稳定退出 0。
+    // Dev machines and CI may have no block devices at all, or may have some;
+    // here we only require that the command exits 0 consistently.
     let output = Command::new(binary())
         .args(["list", "--all"])
         .output()

@@ -1,7 +1,7 @@
-//! 命令行入口与子命令分发。
+//! Command-line entry point and subcommand dispatch.
 //!
-//! 参数解析为手写实现（不依赖 clap）：全局选项只能出现在子命令之前，
-//! 子命令选项支持 `--name value`、`--name=value` 与单字母短选项。
+//! Argument parsing is hand-written (no clap): global options may only appear before the subcommand,
+//! while subcommand options accept `--name value`, `--name=value`, and single-letter short options.
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -30,7 +30,7 @@ use crate::ui::i18n;
 
 const VERSION: &str = crate::VERSION;
 
-/// 进程入口：打印错误与提示，返回退出码。
+/// Process entry point: prints errors and hints, then returns the exit code.
 pub fn run() -> i32 {
     let args: Vec<String> = std::env::args().skip(1).collect();
     match run_with_args(&args) {
@@ -70,13 +70,13 @@ pub fn run_with_args(args: &[String]) -> Result<i32> {
         return Ok(0);
     }
 
-    // 英文界面：命令帮助走独立的英文文案，避免维护两套函数。
+    // English UI: command help uses separate English text so we do not maintain two sets of functions.
     if i18n::is_en() && wants_help(tail) {
         print_command_help_en(command);
         return Ok(0);
     }
 
-    // config init 要在配置文件尚不存在时工作，不能先走常规加载流程。
+    // config init must work while the config file does not exist yet, so it cannot take the normal load path first.
     let initializing = command == "config" && tail.first().map(String::as_str) == Some("init");
     let mut config = if initializing {
         let mut defaults = Config::default();
@@ -123,7 +123,7 @@ pub fn run_with_args(args: &[String]) -> Result<i32> {
     }
 }
 
-// ---------------------------------------------------------------------- 全局参数
+// ---------------------------------------------------------------------- global options
 #[derive(Debug, Default)]
 struct Global {
     config: Option<PathBuf>,
@@ -195,7 +195,7 @@ fn parse_global(args: &[String]) -> Result<(Global, Vec<String>)> {
     Ok((global, args[index..].to_vec()))
 }
 
-// ---------------------------------------------------------------------- 子命令参数
+// ---------------------------------------------------------------------- subcommand options
 struct OptSpec {
     long: &'static str,
     short: Option<char>,
@@ -649,7 +649,7 @@ fn cmd_mount(config: &Config, runner: Arc<dyn CommandRunner>, tail: &[String]) -
     })?;
     let read_only = opts.flag("read-only");
     let force = opts.flag("force");
-    // dry-run 必须留在本地执行，否则会把请求交给真正执行挂载的守护进程。
+    // dry-run must stay local, otherwise the request goes to the daemon that actually performs the mount.
     let use_daemon = !config.dry_run && ctl::is_running(&config.ctl_socket) && !opts.flag("local");
 
     if use_daemon {
@@ -1534,7 +1534,7 @@ fn cmd_doctor(config: &Config, runner: Arc<dyn CommandRunner>, tail: &[String]) 
     }
 }
 
-// ---------------------------------------------------------------------- 杂项
+// ---------------------------------------------------------------------- misc
 fn ensure_ok(response: CtlResponse) -> Result<CtlResponse> {
     if response.ok {
         return Ok(response);

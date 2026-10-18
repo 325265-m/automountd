@@ -1,4 +1,4 @@
-//! udev 事件源：解析 `udevadm monitor --property` 输出，或在无 udev 环境轮询。
+//! udev event source: parse `udevadm monitor --property` output, or poll where udev is unavailable.
 
 use std::collections::{BTreeMap, HashSet};
 use std::io::{BufRead, BufReader};
@@ -22,14 +22,14 @@ pub struct UdevEvent {
     pub properties: BTreeMap<String, String>,
 }
 
-/// 单次累积的 udevadm 输出上限，防止异常输入撑爆内存。
+/// Cap on accumulated udevadm output per flush, so abnormal input cannot blow up memory.
 const MAX_BUFFER: usize = 128 * 1024;
-/// 轮询模式的默认间隔。
+/// Default interval for polling mode.
 const DEFAULT_POLL_INTERVAL: Duration = Duration::from_secs(5);
-/// 轮询线程退出检查的粒度。
+/// Granularity at which the polling thread checks for exit.
 const POLL_SLICE: Duration = Duration::from_millis(100);
 
-/// 解析过程中累积的单个事件块。
+/// A single event block accumulated while parsing.
 struct PartialEvent {
     action: String,
     devpath: String,
@@ -37,7 +37,7 @@ struct PartialEvent {
     properties: BTreeMap<String, String>,
 }
 
-/// 解析一段 udevadm monitor 输出。
+/// Parse a chunk of udevadm monitor output.
 pub fn parse_udevadm_output(text: &str) -> Vec<UdevEvent> {
     let mut events = Vec::new();
     let mut current: Option<PartialEvent> = None;
@@ -45,7 +45,8 @@ pub fn parse_udevadm_output(text: &str) -> Vec<UdevEvent> {
     for raw_line in text.lines() {
         let line = raw_line.trim_end_matches('\r');
         if let Some(header) = parse_event_header(line) {
-            // 连续块：新的头行直接结束上一个块（即使没有空行分隔）。
+            // Consecutive blocks: a new header line ends the previous block directly
+            // (even without a blank separator line).
             if let Some(event) = current.take().and_then(finish_event) {
                 events.push(event);
             }
@@ -82,7 +83,7 @@ pub fn parse_udevadm_output(text: &str) -> Vec<UdevEvent> {
     events
 }
 
-/// 识别 `UDEV  [1234.5678] add /devices/... (block)` 与 `KERNEL[...]` 头行。
+/// Recognise `UDEV  [1234.5678] add /devices/... (block)` and `KERNEL[...]` header lines.
 fn parse_event_header(line: &str) -> Option<PartialEvent> {
     let trimmed = line.trim_start();
     let rest = trimmed
@@ -106,14 +107,15 @@ fn parse_event_header(line: &str) -> Option<PartialEvent> {
     })
 }
 
-/// 补全并过滤一个事件块：只保留 block 子系统的 add/remove/change。
+/// Complete and filter one event block: keep only add/remove/change on the block subsystem.
 fn finish_event(part: PartialEvent) -> Option<UdevEvent> {
     let property_subsystem = part
         .properties
         .get("SUBSYSTEM")
         .map(String::as_str)
         .unwrap_or_default();
-    // 头行里的 (block) 优先；缺失时看 SUBSYSTEM 属性；都没有则按 block 处理。
+    // The (block) marker in the header line wins; otherwise use the SUBSYSTEM property;
+    // if neither is present, treat it as block.
     let subsystem = if part.subsystem.is_empty() {
         property_subsystem
     } else {
@@ -145,7 +147,7 @@ fn finish_event(part: PartialEvent) -> Option<UdevEvent> {
     })
 }
 
-/// devpath 的最后一段作为设备名（DEVNAME 缺失时的兜底）。
+/// Use the last segment of devpath as the device name (fallback when DEVNAME is missing).
 fn devpath_basename(devpath: &str) -> Option<String> {
     let name = devpath.trim_end_matches('/').rsplit('/').next()?;
     let name = name.trim();
@@ -156,7 +158,7 @@ fn devpath_basename(devpath: &str) -> Option<String> {
     }
 }
 
-/// 启动 `udevadm monitor` 子进程并在后台线程读取事件。
+/// Spawn the `udevadm monitor` child process and read events on a background thread.
 pub struct UdevMonitor {
     pid: u32,
 }
@@ -237,7 +239,7 @@ impl UdevMonitor {
         Ok(Self { pid })
     }
 
-    /// 终止子进程（守护进程退出时调用）。
+    /// Terminate the child process (called when the daemon exits).
     pub fn stop(&self) {
         if self.pid == 0 {
             return;
@@ -259,7 +261,7 @@ impl UdevMonitor {
     }
 }
 
-/// 解析并转发缓冲区中的事件；返回 false 表示接收端已关闭。
+/// Parse the events buffered so far and forward them; returning false means the receiver is gone.
 fn flush_events(buffer: &mut String, sender: &Sender<UdevEvent>) -> bool {
     if buffer.trim().is_empty() {
         buffer.clear();
@@ -281,7 +283,7 @@ fn reap(child: &mut Child) {
     let _ = child.wait();
 }
 
-/// 无 udev 时按固定间隔对比设备快照，生成 add/remove 事件。
+/// Without udev, diff device snapshots at a fixed interval to synthesise add/remove events.
 pub struct PollMonitor;
 
 impl PollMonitor {
@@ -310,8 +312,9 @@ impl PollMonitor {
                 let current: HashSet<String> =
                     devices.iter().map(|device| device.name.clone()).collect();
 
-                // 第一轮只建立基线：这些设备在服务启动前就存在，应交给
-                // auto_mount_on_boot/reconcile 处理，不能伪装成热插拔事件。
+                // The first round only establishes a baseline: these devices existed before
+                // the service started, so they belong to auto_mount_on_boot/reconcile and
+                // must not be disguised as hotplug events.
                 if first_poll {
                     first_poll = false;
                     previous = current;
@@ -321,7 +324,8 @@ impl PollMonitor {
                     continue;
                 }
 
-                // 枚举失败（lsblk 暂时报错）会返回空集合；不要因此给所有设备发 remove。
+                // A failed enumeration (lsblk erroring out temporarily) yields an empty set;
+                // do not send remove for every device because of it.
                 if current.is_empty() && !previous.is_empty() {
                     logging::debug("轮询未枚举到设备，可能是临时失败，跳过本轮差异比较");
                     if !sleep_until(interval) {
@@ -363,7 +367,7 @@ fn poll_event(action: &str, name: &str) -> UdevEvent {
     }
 }
 
-/// 分片睡眠，便于及时响应停止请求；返回 false 表示应退出。
+/// Sleep in slices so stop requests are noticed promptly; returning false means we should exit.
 fn sleep_until(interval: Duration) -> bool {
     let mut slept = Duration::ZERO;
     while slept < interval {
@@ -413,7 +417,7 @@ SUBSYSTEM=block
 
     #[test]
     fn parses_multiple_events_and_filters_non_block() {
-        // 两个连续块（中间有空行）+ 一个 input 子系统事件 + 一个 move 事件
+        // Two consecutive blocks (with a blank line between) + one input subsystem event + one move event
         let text = format!(
             "{SINGLE_EVENT}\n\
 KERNEL[1234.6000] remove   /devices/pci0000:00/block/sdb/sdb1 (block)
@@ -462,9 +466,9 @@ SUBSYSTEM=block
         assert_eq!(events[0].devname, "sdd2");
         assert!(events[0].devtype.is_none());
 
-        // 既没有 DEVNAME 也没有 devpath 的块被丢弃
+        // A block with neither DEVNAME nor devpath is dropped
         assert!(parse_udevadm_output("UDEV  [1.0] add\nACTION=add\nSUBSYSTEM=block\n").is_empty());
-        // 空输入、噪声输入都安全
+        // Empty and noisy input are both safe
         assert!(parse_udevadm_output("").is_empty());
         assert!(parse_udevadm_output("monitor will print the received events for:\n").is_empty());
     }

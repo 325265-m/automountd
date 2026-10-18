@@ -1,7 +1,7 @@
-//! 交互式终端界面：列出设备，按编号挂载/卸载。
+//! Interactive terminal UI: list devices, mount/unmount them by index.
 //!
-//! 不依赖 crossterm/ratatui：用普通 stdin 行输入 + ANSI 清屏，
-//! 因此可以通过 SSH、串口或任何终端使用。
+//! Does not depend on crossterm/ratatui: plain stdin line input plus ANSI screen clearing,
+//! so it works over SSH, a serial console, or any terminal.
 
 use std::io::{self, Write};
 use std::sync::Arc;
@@ -25,7 +25,7 @@ pub enum Command {
     Quit,
 }
 
-/// 解析一行输入。编号是界面上显示的 1 起始序号。
+/// Parses a single line of input. Indices are the 1-based numbers shown in the UI.
 pub fn parse_command(line: &str) -> Option<Command> {
     if line.trim().is_empty() {
         return Some(Command::Refresh);

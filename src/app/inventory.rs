@@ -1,4 +1,4 @@
-//! 设备列表快照：把设备、挂载状态、策略结论合成 UI/CLI 需要的视图。
+//! Device list snapshot: combine devices, mount state and policy verdicts into the view UI/CLI needs.
 
 use std::collections::HashSet;
 
@@ -11,7 +11,7 @@ use crate::mountinfo;
 use crate::policy;
 use crate::state::State;
 
-/// 生成设备视图；`include_all` 为 true 时保留不可挂载设备（用于 `list --all`）。
+/// Build the device view; when `include_all` is true, unmountable devices are kept too (for `list --all`).
 pub fn snapshot(
     config: &Config,
     runner: &dyn CommandRunner,
@@ -31,7 +31,7 @@ pub fn snapshot(
     ))
 }
 
-/// 纯逻辑部分：不触碰 `/proc`、`/sys` 与外部命令，便于单元测试。
+/// Pure-logic half: touches no `/proc`, `/sys` or external commands, so it is easy to unit test.
 fn build_views(
     config: &Config,
     devices: &[BlockDevice],
@@ -80,7 +80,7 @@ fn push_unique(target: &mut Vec<String>, value: String) {
     }
 }
 
-/// 未指定 `--all` 时隐藏“没内容可看”的设备；已挂载的设备一律保留。
+/// Without `--all`, hide devices with nothing to show; mounted devices are always kept.
 fn visible(view: &DeviceView) -> bool {
     if view.mounted() {
         return true;
@@ -95,7 +95,7 @@ fn visible(view: &DeviceView) -> bool {
     view.decision.code != "no-filesystem"
 }
 
-/// 先按完整路径匹配，再按设备名（basename）兜底。
+/// Match on the full path first, then fall back to the device name (basename).
 fn lookup_managed<'a>(records: &'a [MountRecord], device: &BlockDevice) -> Option<&'a MountRecord> {
     records
         .iter()
@@ -111,7 +111,7 @@ fn basename(path: &str) -> &str {
     path.rsplit(['/', '\\']).next().unwrap_or(path)
 }
 
-/// 自然排序：`sda2` 排在 `sda10` 之前。
+/// Natural ordering: `sda2` sorts before `sda10`.
 fn natural_cmp(left: &str, right: &str) -> std::cmp::Ordering {
     let left_parts = segments(left);
     let right_parts = segments(right);
@@ -127,7 +127,7 @@ fn natural_cmp(left: &str, right: &str) -> std::cmp::Ordering {
     left_parts.len().cmp(&right_parts.len())
 }
 
-/// 拆成 (是否数字, 片段)。
+/// Split into (is_numeric, segment) pieces.
 fn segments(text: &str) -> Vec<(bool, &str)> {
     let bytes = text.as_bytes();
     let mut parts = Vec::new();
@@ -136,7 +136,8 @@ fn segments(text: &str) -> Vec<(bool, &str)> {
     for (index, byte) in bytes.iter().enumerate() {
         let is_digit = byte.is_ascii_digit();
         if is_digit != digit {
-            // 数字/非数字交界一定是合法的 UTF-8 边界（ASCII 数字只占一个字节）。
+            // A digit/non-digit boundary is always a valid UTF-8 boundary (an ASCII digit
+            // occupies a single byte).
             parts.push((digit, &text[start..index]));
             start = index;
             digit = is_digit;
@@ -155,7 +156,7 @@ fn compare_number(left: &str, right: &str) -> std::cmp::Ordering {
         .len()
         .cmp(&right_digits.len())
         .then_with(|| left_digits.cmp(right_digits))
-        // 12 与 012：数值相同，用原始文本保持稳定顺序
+        // 12 vs 012: same numeric value, so compare the raw text to keep the order stable
         .then_with(|| left.cmp(right))
 }
 
@@ -237,7 +238,7 @@ mod tests {
     fn snapshot_reads_devices_from_lsblk() {
         use crate::exec::{CommandOutput, MockRunner};
 
-        // 一台 U 盘：一个 exfat 分区 + 一个未格式化分区
+        // One USB stick: one exfat partition plus one unformatted partition
         let json = r#"{"blockdevices":[{"name":"sdz","type":"disk","rm":true,
             "hotplug":true,"tran":"usb","size":32000000000,"children":[
             {"name":"sdz1","type":"part","fstype":"exfat","label":"U 盘",
@@ -283,7 +284,7 @@ mod tests {
         assert_eq!(views[0].target(), Some("/media/u/U 盘"));
         assert_eq!(views[0].decision.code, "already-mounted");
         assert!(!views[0].decision.allowed);
-        // managed 记录来自状态文件
+        // The managed record comes from the state file
         let managed = views[0].managed.as_ref().expect("应有 managed 记录");
         assert_eq!(managed.target, "/media/u/U 盘");
         assert_eq!(managed.owner_uid, Some(1000));
@@ -398,7 +399,7 @@ mod tests {
     #[test]
     fn matches_managed_record_by_basename() {
         let temp = TempDir::new("inventory-managed");
-        // 记录里只写了设备名（例如来自旧版本状态文件）
+        // The record only stores the device name (for example from an older state file)
         let state = state_in(&temp, vec![record("sdb1", "/media/u/U 盘")]);
         let views = build_views(
             &Config::default(),
@@ -413,7 +414,7 @@ mod tests {
             views[0].managed.as_ref().map(|r| r.target.as_str()),
             Some("/media/u/U 盘")
         );
-        // 路径完全匹配优先于 basename
+        // An exact path match wins over basename
         let temp2 = TempDir::new("inventory-managed2");
         let mut other = record("/dev/sdc1", "/media/u/别的");
         other.device = "/dev/sdc1".to_string();
@@ -438,7 +439,7 @@ mod tests {
         let state = state_in(&temp, Vec::new());
         let mut dev = device("sdb1", "part", Some("exfat"));
         dev.mountpoint = Some("/media/u/U 盘".to_string());
-        // 同名设备被绑定挂载两次
+        // The same device is bind-mounted twice
         let mounts = vec![
             mount_entry("/dev/sdb1", "/media/u/U 盘"),
             mount_entry("/dev/sdb1", "/media/u/U 盘"),

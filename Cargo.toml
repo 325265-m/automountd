@@ -3,7 +3,7 @@ name = "automountd"
 version = "1.0.0"
 edition = "2021"
 rust-version = "1.74"
-description = "Linux 磁盘自动挂载守护进程：udev 热插拔、开机挂载、CLI 与交互界面"
+description = "Linux disk auto-mount daemon with udev hotplug, boot-time mounting, CLI, and TUI"
 license = "GPL-3.0-or-later"
 authors = ["automountd contributors"]
 readme = "README.md"
@@ -19,7 +19,7 @@ name = "automountd"
 path = "src/main.rs"
 
 [dependencies]
-# 当前无运行时依赖。新增 crate 前请阅读 CONTRIBUTING.md 的「依赖策略」。
+# No runtime dependencies at the moment. Read the "Dependency Policy" section of CONTRIBUTING.md before adding a crate.
 
 [profile.release]
 lto = "thin"

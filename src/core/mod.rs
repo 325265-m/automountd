@@ -1,7 +1,8 @@
-//! 纯逻辑层：配置、错误、数据模型、命名、策略、文件系统与挂载表解析。
+//! Pure logic layer: configuration, errors, data model, naming, policy, filesystem and mount table
+//! parsing.
 //!
-//! 这一层不直接执行系统命令（命令通过 `crate::system::exec` 注入），
-//! 因此可以在非 Linux 开发机上完整地跑单元测试。
+//! This layer never executes system commands directly (commands are injected through
+//! `crate::system::exec`), so the full unit test suite can run on a non-Linux development machine.
 
 pub mod config;
 pub mod error;

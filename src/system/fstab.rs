@@ -1,15 +1,16 @@
-//! `/etc/fstab` 持久化。
+//! `/etc/fstab` persistence.
 //!
-//! 只实现本项目需要的部分：解析、查找、追加、删除，以及安全的写入
-//! （先备份 `.automountd.bak`，再写临时文件并 `rename` 原子替换）。
+//! Only the parts this project needs: parse, look up, append, delete, and safe
+//! writes (back up to `.automountd.bak` first, then write a temp file and replace
+//! it atomically with `rename`).
 //!
-//! 格式（fstab(5)）：
+//! Format (fstab(5)):
 //!
 //! ```text
-//! UUID=1234-ABCD /media/alice/备份盘 exfat defaults,nofail 0 0
+//! UUID=1234-ABCD /media/alice/backup-disk exfat defaults,nofail 0 0
 //! ```
 //!
-//! 字段中的空格以 `\040` 表示，制表符以 `\011` 表示。
+//! A space inside a field is written as `\040`, a tab as `\011`.
 
 use std::fs;
 use std::io::Write;
@@ -18,7 +19,7 @@ use std::path::{Path, PathBuf};
 use crate::error::{Error, ErrorKind, Result};
 use crate::mountinfo;
 
-/// 推荐给移动磁盘的 systemd 友好选项：设备缺席时不影响开机。
+/// systemd-friendly options recommended for removable disks: a missing device does not hold up boot.
 pub const BASE_FSTAB_OPTIONS: &[&str] = &["nofail", "x-systemd.device-timeout=10"];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -62,7 +63,7 @@ impl FstabEntry {
     }
 }
 
-/// fstab 中用 `\040` 表示空格。
+/// In fstab a space is written as `\040`.
 pub fn escape_field(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     for ch in text.chars() {
@@ -77,10 +78,11 @@ pub fn escape_field(text: &str) -> String {
     out
 }
 
-/// 按空白拆分 fstab 行，尊重反斜杠转义，遇到 `#` 注释截止。
+/// Split an fstab line on whitespace, honoring backslash escapes and stopping at
+/// a `#` comment.
 ///
-/// 转义序列原样保留（例如 `\040` 不会被拆成两个字段），
-/// 需要还原时用 [`crate::mountinfo::unescape`]。
+/// Escape sequences are kept verbatim (e.g. `\040` is not split into two fields);
+/// use [`crate::mountinfo::unescape`] to decode them.
 pub fn split_fields(line: &str) -> Vec<String> {
     let mut fields = Vec::new();
     let mut current = String::new();
@@ -160,7 +162,7 @@ pub fn find_entry<'a>(
         .find(|entry| entry_matches(entry, source, target))
 }
 
-/// 添加一条记录，返回 (是否修改, 说明)。
+/// Add an entry; returns (whether anything changed, message).
 pub fn add_entry(path: &Path, entry: &FstabEntry) -> Result<(bool, String)> {
     validate_entry(entry)?;
     let resolved = resolve_target(path);
@@ -210,7 +212,7 @@ pub fn add_entry(path: &Path, entry: &FstabEntry) -> Result<(bool, String)> {
     ))
 }
 
-/// 删除匹配记录（source 或 target 任一匹配）。
+/// Delete matching entries (a match on either source or target is enough).
 pub fn remove_entry(
     path: &Path,
     source: Option<&str>,
@@ -268,7 +270,7 @@ pub fn remove_entry(
     ))
 }
 
-/// 比较 source / target；None 表示不限制该维度。
+/// Compare source / target; `None` leaves that dimension unconstrained.
 fn entry_matches(entry: &FstabEntry, source: Option<&str>, target: Option<&str>) -> bool {
     let source_ok = source
         .map(|wanted| normalize_source(&entry.source) == normalize_source(wanted))
@@ -279,11 +281,11 @@ fn entry_matches(entry: &FstabEntry, source: Option<&str>, target: Option<&str>)
     source_ok && target_ok
 }
 
-/// `UUID=` / `PARTUUID=` / `LABEL=` 前缀大小写不敏感；UUID 值也做大小写归一。
+/// The `UUID=` / `PARTUUID=` / `LABEL=` prefixes are case-insensitive, and UUID values are case-folded too.
 fn normalize_source(source: &str) -> String {
     let trimmed = source.trim();
     for prefix in ["UUID=", "PARTUUID=", "LABEL="] {
-        // 用 get() 而不是字节切片：避免在非 ASCII 字符中间切开导致 panic。
+        // Use get() rather than byte slicing: slicing inside a non-ASCII character would panic.
         if let Some(head) = trimmed.get(..prefix.len()) {
             if head.eq_ignore_ascii_case(prefix) {
                 let value = trimmed[prefix.len()..].trim();
@@ -305,7 +307,7 @@ fn same_path(left: &str, right: &str) -> bool {
     left == right || left.trim_end_matches('/') == right.trim_end_matches('/')
 }
 
-/// 合并选项：原有在前，`BASE_FSTAB_OPTIONS` 补在后面，按 `=` 前的键去重。
+/// Merge options: existing ones first, `BASE_FSTAB_OPTIONS` appended, de-duplicated by the key before `=`.
 fn merge_options(existing: &[String]) -> Vec<String> {
     let mut merged: Vec<String> = Vec::new();
     let candidates = existing
@@ -354,8 +356,9 @@ fn parent_of(path: &Path) -> PathBuf {
     }
 }
 
-/// 写入前备份为 `<文件名>.automountd.bak`；文件不存在或已有备份时不再覆盖，
-/// 确保第一次操作前的原始内容始终可回滚。
+/// Back up to `<file name>.automountd.bak` before writing; a missing file or an
+/// existing backup is left alone, so the content from before the first change can
+/// always be restored.
 fn backup_file(path: &Path) -> Result<()> {
     if !path.exists() {
         return Ok(());
@@ -377,7 +380,7 @@ fn backup_file(path: &Path) -> Result<()> {
     Ok(())
 }
 
-/// 写 fstab 前校验字段，避免换行注入出额外的挂载记录。
+/// Validate the fields before writing fstab so a newline cannot inject an extra mount entry.
 fn validate_entry(entry: &FstabEntry) -> Result<()> {
     for (name, value) in [
         ("source", entry.source.as_str()),
@@ -401,7 +404,7 @@ fn validate_entry(entry: &FstabEntry) -> Result<()> {
     Ok(())
 }
 
-/// 若 fstab 本身是符号链接，写入其真实目标，避免把链接替换成普通文件。
+/// If fstab itself is a symlink, write to its real target so the link is not replaced by a regular file.
 fn resolve_target(path: &Path) -> PathBuf {
     match fs::canonicalize(path) {
         Ok(resolved) => resolved,
@@ -409,7 +412,7 @@ fn resolve_target(path: &Path) -> PathBuf {
     }
 }
 
-/// 临时文件 + `rename` 原子替换，尽量保留原文件权限与属主。
+/// Temp file plus an atomic `rename`, preserving the original permissions and owner where possible.
 fn write_atomic(path: &Path, text: &str) -> Result<()> {
     let parent = parent_of(path);
     fs::create_dir_all(&parent).map_err(|err| {
@@ -583,7 +586,7 @@ mod tests {
             .unwrap()
             .contains("UUID=AAAA"));
 
-        // 第二次添加应幂等
+        // a second add must be idempotent
         let (changed, message) = add_entry(&path, &entry).unwrap();
         assert!(!changed);
         assert!(message.contains("已存在"));

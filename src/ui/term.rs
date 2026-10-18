@@ -1,4 +1,4 @@
-//! 终端输出辅助：颜色、表格、大小与时间格式化。
+//! Terminal output helpers: colors, tables, size and time formatting.
 
 use crate::naming::display_width;
 use crate::platform::now_epoch;
@@ -65,7 +65,7 @@ pub fn pad(text: &str, width: usize) -> String {
     padded
 }
 
-/// 生成对齐的纯文本表格（按显示宽度对齐，支持中文）。
+/// Builds an aligned plain-text table (aligned by display width, CJK-aware).
 pub fn table(headers: &[&str], rows: &[Vec<String>]) -> String {
     if headers.is_empty() {
         return String::new();
@@ -102,7 +102,7 @@ fn render_row(cells: &[String], widths: &[usize]) -> String {
     line.trim_end().to_string()
 }
 
-/// 把字节数格式化为 1.5 GiB 这样的形式。
+/// Formats a byte count in the form `1.5 GiB`.
 pub fn format_size(size: u64) -> String {
     if size == 0 {
         return "-".to_string();
@@ -121,7 +121,7 @@ pub fn format_size(size: u64) -> String {
     }
 }
 
-/// Unix 秒 -> `YYYY-MM-DD HH:MM:SS`（UTC）。
+/// Unix seconds -> `YYYY-MM-DD HH:MM:SS` (UTC).
 pub fn format_timestamp(epoch: u64) -> String {
     let secs = epoch as i64;
     let days = secs.div_euclid(86_400);
@@ -135,7 +135,7 @@ pub fn format_timestamp(epoch: u64) -> String {
     )
 }
 
-/// 当前时间字符串，供日志使用。
+/// Current time as a string, for log output.
 pub fn now_string() -> String {
     let text = format_timestamp(now_epoch());
     text.trim_end_matches(" UTC").to_string()
@@ -146,7 +146,7 @@ pub fn format_time_of_day(epoch: u64) -> String {
     format!("{:02}:{:02}", rem / 3600, (rem % 3600) / 60)
 }
 
-/// 相对时间（中文），例如 “3 分钟前”。
+/// Relative time in Chinese, e.g. "3 minutes ago" rendered with Chinese units.
 pub fn relative_time(epoch: u64) -> String {
     relative_time_at(epoch, now_epoch())
 }
@@ -168,7 +168,7 @@ pub fn relative_time_at(epoch: u64, now: u64) -> String {
     }
 }
 
-/// 按显示宽度截断，超出部分用省略号。
+/// Truncates by display width, replacing the excess with an ellipsis.
 pub fn truncate(text: &str, max_width: usize) -> String {
     if display_width(text) <= max_width {
         return text.to_string();
@@ -190,7 +190,7 @@ pub fn truncate(text: &str, max_width: usize) -> String {
     result
 }
 
-/// Howard Hinnant 的 civil_from_days 算法（公历）。
+/// Howard Hinnant's civil_from_days algorithm (proleptic Gregorian calendar).
 fn civil_from_days(days: i64) -> (i64, u32, u32) {
     let z = days + 719_468;
     let era = if z >= 0 { z } else { z - 146_096 } / 146_097;

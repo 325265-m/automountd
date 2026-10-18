@@ -1,7 +1,9 @@
-//! 系统交互层：进程执行、设备发现、挂载/卸载、fstab、状态、udev、会话与通知。
+//! System interaction layer: process execution, device discovery, mount/unmount,
+//! fstab, state, udev, sessions and notifications.
 //!
-//! Linux 专属代码（FFI、Unix socket、udev 子进程）集中在 `platform`、`udev`、
-//! `mounter`、`state` 等模块，并通过 `#[cfg(unix)]` 隔离。
+//! Linux-only code (FFI, Unix sockets, udev child processes) is concentrated in
+//! `platform`, `udev`, `mounter`, `state` and other modules, isolated behind
+//! `#[cfg(unix)]`.
 
 pub mod devices;
 pub mod exec;

@@ -1,9 +1,9 @@
-//! 块设备发现：优先 `lsblk -J`，否则回退 sysfs + blkid。
+//! Block device discovery: prefer `lsblk -J`, otherwise fall back to sysfs + blkid.
 //!
-//! `lsblk -J` 输出 JSON；当前未引入 JSON 依赖，因此本模块自带一个
-//! 只覆盖 lsblk 输出所需语法的极简 JSON 解析器：object / array / string /
-//! number / true / false / null；字符串支持 `\" \\ \/ \b \f \n \r \t` 与
-//! `\uXXXX`（含 UTF-16 代理对）。
+//! `lsblk -J` prints JSON. No JSON dependency is pulled in, so this module carries
+//! a minimal JSON parser that only covers the syntax lsblk output needs: object /
+//! array / string / number / true / false / null; strings support
+//! `\" \\ \/ \b \f \n \r \t` and `\uXXXX` (including UTF-16 surrogate pairs).
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
@@ -14,18 +14,18 @@ use crate::exec::CommandRunner;
 use crate::logging;
 use crate::model::{BlockDevice, MountEntry};
 
-/// 完整列集合（较新的 util-linux）。
+/// Full column set (newer util-linux).
 pub const FULL_COLUMNS: &str =
     "NAME,TYPE,FSTYPE,LABEL,UUID,PARTUUID,SIZE,RM,RO,HOTPLUG,TRAN,MOUNTPOINT,MODEL,SERIAL,PKNAME";
-/// 兼容旧版 util-linux 的最小列集合。
+/// Minimal column set for older util-linux releases.
 pub const MINIMAL_COLUMNS: &str = "NAME,TYPE,FSTYPE,LABEL,UUID,SIZE,RM,RO,MOUNTPOINT";
 
-/// sysfs 中的块设备目录。
+/// Block device directory in sysfs.
 const SYSFS_BLOCK_DIR: &str = "/sys/class/block";
-/// 探测命令超时，避免无响应设备卡住守护进程。
+/// Probe timeout so an unresponsive device cannot stall the daemon.
 const PROBE_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// 列出当前所有块设备。
+/// List all current block devices.
 pub fn list_devices(
     runner: &dyn CommandRunner,
     include_loop: bool,
@@ -52,7 +52,7 @@ pub fn list_devices(
     devices
 }
 
-/// 解析 `lsblk -J` 输出（嵌套 JSON 展平）。
+/// Parse `lsblk -J` output (nested JSON is flattened).
 pub fn parse_lsblk(text: &str) -> Result<Vec<BlockDevice>> {
     let text = text.trim().trim_start_matches('\u{feff}');
     if text.is_empty() {
@@ -80,7 +80,7 @@ pub fn parse_lsblk(text: &str) -> Result<Vec<BlockDevice>> {
     Ok(devices)
 }
 
-/// 用 blkid 读取文件系统信息；失败或无文件系统时返回空表。
+/// Read filesystem information with blkid; returns an empty map on failure or when there is no filesystem.
 pub fn probe_blkid(runner: &dyn CommandRunner, device_path: &str) -> BTreeMap<String, String> {
     if !runner.which("blkid") {
         logging::debug("未找到 blkid，跳过文件系统探测");
@@ -94,7 +94,7 @@ pub fn probe_blkid(runner: &dyn CommandRunner, device_path: &str) -> BTreeMap<St
         }
     };
     if !output.ok() {
-        // 没有文件系统的设备 blkid 返回非 0，属于正常情况。
+        // blkid exits non-zero for devices without a filesystem, which is expected.
         logging::debug(format!(
             "blkid 未能在 {device_path} 上找到文件系统（退出码 {}）",
             output.status
@@ -104,7 +104,7 @@ pub fn probe_blkid(runner: &dyn CommandRunner, device_path: &str) -> BTreeMap<St
     parse_blkid_export(&output.stdout)
 }
 
-/// 重新探测文件系统（udev 事件到达时分区可能尚未就绪）。
+/// Re-probe the filesystem (a udev event may arrive before the partition is ready).
 pub fn refresh_device(device: &BlockDevice, runner: &dyn CommandRunner) -> BlockDevice {
     let mut updated = device.clone();
     let missing_fstype = is_blank(updated.fstype.as_deref());
@@ -136,10 +136,10 @@ pub fn refresh_device(device: &BlockDevice, runner: &dyn CommandRunner) -> Block
     updated
 }
 
-/// 按 设备名 / 路径 / UUID / PARTUUID / 卷标 查找设备。
+/// Find a device by name / path / UUID / PARTUUID / label.
 ///
-/// 支持 `sdb1`、`/dev/sdb1`、`UUID=xxxx`、`/dev/disk/by-uuid/xxxx`、
-/// `LABEL=备份盘`、`备份盘` 等写法。
+/// Accepts forms such as `sdb1`, `/dev/sdb1`, `UUID=xxxx`, `/dev/disk/by-uuid/xxxx`,
+/// `LABEL=backup-disk` and `backup-disk`.
 pub fn resolve_device(devices: &[BlockDevice], reference: &str) -> Result<BlockDevice> {
     let reference = reference.trim();
     if reference.is_empty() {
@@ -191,7 +191,7 @@ pub fn resolve_device(devices: &[BlockDevice], reference: &str) -> Result<BlockD
     }
 }
 
-/// 按设备名查找。
+/// Look up by device name.
 pub fn find_by_name(devices: &[BlockDevice], name: &str) -> Option<BlockDevice> {
     let wanted = name.trim();
     if wanted.is_empty() {
@@ -210,7 +210,7 @@ pub fn find_by_name(devices: &[BlockDevice], name: &str) -> Option<BlockDevice> 
         .cloned()
 }
 
-/// 向上追到整盘名（sda1 -> sda）。
+/// Walk up to the whole-disk name (sda1 -> sda).
 pub fn top_level_name(devices: &[BlockDevice], device: &BlockDevice) -> String {
     let mut current = device.name.clone();
     let mut seen: HashSet<String> = HashSet::new();
@@ -239,15 +239,16 @@ pub fn top_level_name(devices: &[BlockDevice], device: &BlockDevice) -> String {
             current = parent.to_string();
             continue;
         }
-        // 父设备不在列表里（例如只有分区信息），父名本身就是整盘名。
+        // The parent is not in the list (only partition info is known, say), so the
+        // parent name is itself the whole-disk name.
         return parent.to_string();
     }
     current
 }
 
-/// 找出承载系统关键目录（/、/boot、/usr 等）的整盘名。
+/// Find the whole-disk names backing critical system directories (/, /boot, /usr, ...).
 pub fn system_disk_names(devices: &[BlockDevice], mounts: &[MountEntry]) -> HashSet<String> {
-    /// 系统关键挂载点：这些目录所在的磁盘绝不自动挂载。
+    /// Critical system mount points: the disks holding these directories are never auto-mounted.
     const CRITICAL_TARGETS: &[&str] = &["/", "/boot", "/boot/efi", "/usr", "/var", "/etc"];
 
     let mut names = HashSet::new();
@@ -267,7 +268,7 @@ pub fn system_disk_names(devices: &[BlockDevice], mounts: &[MountEntry]) -> Hash
         if !direct.is_empty() {
             candidates.push(direct);
         }
-        // /dev/disk/by-uuid/... 这类软链接需要先解析成真实设备节点。
+        // Symlinks such as /dev/disk/by-uuid/... must be resolved to the real device node first.
         if let Ok(real) = std::fs::canonicalize(&entry.source) {
             let resolved = basename(&real.to_string_lossy()).to_string();
             if !resolved.is_empty() && !candidates.contains(&resolved) {
@@ -283,7 +284,8 @@ pub fn system_disk_names(devices: &[BlockDevice], mounts: &[MountEntry]) -> Hash
             }
         }
         if !matched {
-            // 设备不在当前列表中（容器、权限受限等），至少保护已知的节点名。
+            // The device is not in the current list (container, restricted permissions,
+            // ...), so at least protect the node names we know about.
             logging::debug(format!(
                 "系统挂载点 {} 的设备 {} 不在设备列表中，按节点名保护",
                 entry.target, entry.source
@@ -297,12 +299,12 @@ pub fn system_disk_names(devices: &[BlockDevice], mounts: &[MountEntry]) -> Hash
 }
 
 // ---------------------------------------------------------------------------
-// lsblk JSON 解析
+// lsblk JSON parsing
 // ---------------------------------------------------------------------------
 
 type JsonResult<T> = std::result::Result<T, String>;
 
-/// 极简 JSON 值。
+/// Minimal JSON value.
 #[derive(Debug, Clone, PartialEq)]
 enum Json {
     Null,
@@ -339,7 +341,7 @@ impl Json {
     }
 }
 
-/// 手写 JSON 解析器（只解析，不做序列化）。
+/// Hand-written JSON parser (parsing only, no serialization).
 struct JsonParser<'a> {
     bytes: &'a [u8],
     pos: usize,
@@ -596,7 +598,7 @@ impl<'a> JsonParser<'a> {
     }
 }
 
-/// 展平一个 lsblk 节点，递归处理 `children`。
+/// Flatten one lsblk node, recursing into `children`.
 fn flatten_node(node: &Json, parent: Option<&str>, out: &mut Vec<BlockDevice>) {
     let Some(name) = node_name(node) else {
         logging::debug("lsblk 输出中存在缺少 name 的设备节点，已跳过");
@@ -644,13 +646,13 @@ fn flatten_node(node: &Json, parent: Option<&str>, out: &mut Vec<BlockDevice>) {
     }
 }
 
-/// 设备名（兼容 `lsblk -p` 输出的 `/dev/sda` 形式）。
+/// Device name (also accepts the `/dev/sda` form printed by `lsblk -p`).
 fn node_name(node: &Json) -> Option<String> {
     let raw = json_text(node, "name")?;
     Some(raw.strip_prefix("/dev/").unwrap_or(&raw).to_string())
 }
 
-/// 读取字符串字段；数字也转成文本，数组取第一个非空字符串。
+/// Read a string field; numbers are turned into text and arrays yield the first non-empty string.
 fn json_text(node: &Json, key: &str) -> Option<String> {
     match node.get(key)? {
         Json::Str(text) => {
@@ -674,7 +676,7 @@ fn json_text(node: &Json, key: &str) -> Option<String> {
     }
 }
 
-/// 布尔字段兼容 true/false、`"1"`/`"0"` 与数字。
+/// Boolean fields accept true/false, `"1"`/`"0"` and numbers.
 fn json_bool(node: &Json, key: &str) -> bool {
     match node.get(key) {
         Some(Json::Bool(value)) => *value,
@@ -687,7 +689,7 @@ fn json_bool(node: &Json, key: &str) -> bool {
     }
 }
 
-/// 大小字段：`-b` 输出纯字节数，同时容忍 `1.5G` 这类人类可读写法。
+/// Size fields: `-b` prints plain bytes, but human-readable forms such as `1.5G` are tolerated.
 fn json_u64(node: &Json, key: &str) -> u64 {
     match node.get(key) {
         Some(Json::Number(text)) | Some(Json::Str(text)) => parse_size_text(text),
@@ -726,7 +728,7 @@ fn parse_size_text(text: &str) -> u64 {
     (value * multiplier) as u64
 }
 
-/// 用 `pkname` 补齐父设备的 children（lsblk 未给出嵌套结构时也有用）。
+/// Fill in a parent's children from `pkname` (also useful when lsblk gives no nesting).
 fn link_children(devices: &mut [BlockDevice]) {
     let pairs: Vec<(String, String)> = devices
         .iter()
@@ -747,10 +749,10 @@ fn link_children(devices: &mut [BlockDevice]) {
 }
 
 // ---------------------------------------------------------------------------
-// lsblk / sysfs / blkid 辅助
+// lsblk / sysfs / blkid helpers
 // ---------------------------------------------------------------------------
 
-/// 执行一次 lsblk 并解析；命令不存在、退出码非 0 或 JSON 非法时返回 None。
+/// Run lsblk once and parse it; returns None when the program is missing, exits non-zero, or prints invalid JSON.
 fn lsblk_devices(runner: &dyn CommandRunner, columns: &str) -> Option<Vec<BlockDevice>> {
     let output = match runner.run("lsblk", &["-J", "-b", "-o", columns], Some(PROBE_TIMEOUT)) {
         Ok(output) => output,
@@ -780,7 +782,7 @@ fn lsblk_devices(runner: &dyn CommandRunner, columns: &str) -> Option<Vec<BlockD
     }
 }
 
-/// 从 sysfs 目录枚举块设备（无 lsblk 的环境或容器）。
+/// Enumerate block devices from the sysfs directory (environments or containers without lsblk).
 fn list_sysfs(root: &Path, runner: &dyn CommandRunner) -> Vec<BlockDevice> {
     let mut names: Vec<String> = Vec::new();
     match std::fs::read_dir(root) {
@@ -865,8 +867,9 @@ fn list_sysfs(root: &Path, runner: &dyn CommandRunner) -> Vec<BlockDevice> {
     devices
 }
 
-/// 分区的 removable/hotplug 属性在父盘上；sysfs 兜底时把它们继承下来，
-/// 否则所有分区都会被当作“内置盘”，USB 分区永远不会自动挂载。
+/// A partition's removable/hotplug attributes live on the parent disk; the sysfs
+/// fallback inherits them, otherwise every partition would look like a "built-in
+/// disk" and USB partitions would never be auto-mounted.
 fn inherit_parent_flags(devices: &mut [BlockDevice]) {
     let mut parents: HashMap<String, (bool, bool)> = HashMap::new();
     for device in devices.iter().filter(|device| device.parent.is_none()) {
@@ -887,7 +890,7 @@ fn inherit_parent_flags(devices: &mut [BlockDevice]) {
     }
 }
 
-/// 父盘名：优先取真实路径的上一级目录名，否则按名称规则推断。
+/// Parent disk name: prefer the parent directory name of the real path, otherwise infer it from naming rules.
 fn sysfs_parent(dir: &Path, name: &str, known: &[String]) -> Option<String> {
     if let Ok(real) = std::fs::canonicalize(dir) {
         if let Some(candidate) = real
@@ -903,7 +906,7 @@ fn sysfs_parent(dir: &Path, name: &str, known: &[String]) -> Option<String> {
     guess_parent_name(name)
 }
 
-/// 从分区名推断整盘名：sda1 -> sda、nvme0n1p1 -> nvme0n1、mmcblk0p1 -> mmcblk0。
+/// Infer the whole-disk name from a partition name: sda1 -> sda, nvme0n1p1 -> nvme0n1, mmcblk0p1 -> mmcblk0.
 fn guess_parent_name(name: &str) -> Option<String> {
     if let Some(index) = name.rfind('p') {
         let (head, tail) = name.split_at(index);
@@ -934,7 +937,7 @@ fn read_trimmed(path: &Path) -> Option<String> {
         .map(|text| text.trim().to_string())
 }
 
-/// 解析 `blkid -o export` 的 `KEY=VALUE` 输出。
+/// Parse the `KEY=VALUE` output of `blkid -o export`.
 fn parse_blkid_export(text: &str) -> BTreeMap<String, String> {
     let mut values = BTreeMap::new();
     for line in text.lines() {
@@ -955,7 +958,7 @@ fn parse_blkid_export(text: &str) -> BTreeMap<String, String> {
 }
 
 // ---------------------------------------------------------------------------
-// 字符串与匹配辅助
+// String and matching helpers
 // ---------------------------------------------------------------------------
 
 fn is_blank(value: Option<&str>) -> bool {
@@ -1033,7 +1036,7 @@ fn by_name_or_label<'a>(devices: &'a [BlockDevice], reference: &str) -> Vec<&'a 
     by_label(devices, reference)
 }
 
-/// `starts_with` 的大小写不敏感版本，返回剩余部分。
+/// Case-insensitive `starts_with` that also returns the remainder.
 fn strip_prefix_ci<'a>(value: &'a str, prefix: &str) -> Option<&'a str> {
     let head = value.get(..prefix.len())?;
     if head.eq_ignore_ascii_case(prefix) {
@@ -1043,7 +1046,7 @@ fn strip_prefix_ci<'a>(value: &'a str, prefix: &str) -> Option<&'a str> {
     }
 }
 
-/// `/dev/disk/by-label/My\x20Disk` 里的 `\x20` 转义。
+/// The `\x20` escapes used in `/dev/disk/by-label/My\x20Disk`.
 fn unescape_by_label(value: &str) -> String {
     let mut out = String::with_capacity(value.len());
     let mut chars = value.chars().peekable();
@@ -1206,7 +1209,7 @@ mod tests {
 
         let sdb1 = devices.iter().find(|d| d.name == "sdb1").unwrap();
         assert_eq!(sdb1.label.as_deref(), Some("备份盘"));
-        // "0" 必须解析成 false
+        // "0" must parse as false
         assert!(!sdb1.read_only);
     }
 
@@ -1266,12 +1269,12 @@ mod tests {
             .expect("应当调用 lsblk");
         assert_eq!(lsblk_call.1, vec!["-J", "-b", "-o", FULL_COLUMNS]);
 
-        // include_loop = true 时保留 loop 设备
+        // include_loop = true keeps loop devices
         let runner = MockRunner::new().respond("lsblk", CommandOutput::success(json));
         let devices = list_devices(&runner, true, true);
         assert!(devices.iter().any(|d| d.name == "loop0"));
 
-        // prefer_lsblk = false 时不调用 lsblk
+        // prefer_lsblk = false never calls lsblk
         let runner = MockRunner::new();
         let _ = list_devices(&runner, true, false);
         assert!(!runner.called("lsblk"));
@@ -1283,7 +1286,8 @@ mod tests {
             .respond("lsblk", CommandOutput::failure(1, "lsblk: unknown column"))
             .respond("lsblk", CommandOutput::failure(1, "lsblk: unknown column"));
         let devices = list_devices(&runner, false, true);
-        // 开发机上 /sys/class/block 不存在时结果为空，但必须尝试过两次 lsblk
+        // On a dev machine /sys/class/block may not exist, so the result is empty, but
+        // lsblk must still have been tried twice
         let lsblk_calls = runner
             .calls()
             .iter()
@@ -1348,16 +1352,16 @@ mod tests {
         assert_eq!(info.get("LABEL").map(String::as_str), Some("My Disk"));
         assert!(runner.called("blkid"));
 
-        // 没有 blkid 时返回空表且不执行命令
+        // Without blkid the map is empty and no command is run
         let runner = MockRunner::new().missing("blkid");
         assert!(probe_blkid(&runner, "/dev/sdb1").is_empty());
         assert!(!runner.called("blkid"));
 
-        // blkid 失败（设备无文件系统）也返回空表
+        // A failing blkid (device without a filesystem) also yields an empty map
         let runner = MockRunner::new().respond("blkid", CommandOutput::failure(2, ""));
         assert!(probe_blkid(&runner, "/dev/sdb1").is_empty());
 
-        // 缺少文件系统信息时重新探测
+        // Missing filesystem information triggers a re-probe
         let mut device = sample_device("sdb1");
         let runner = MockRunner::new().respond(
             "blkid",
@@ -1369,7 +1373,7 @@ mod tests {
         assert_eq!(refreshed.label.as_deref(), Some("Win"));
         assert!(runner.called("blkid"));
 
-        // 信息齐全时不重复探测
+        // Complete information means no repeated probing
         device.fstype = Some("ext4".to_string());
         device.uuid = Some("FULL".to_string());
         device.label = Some("Data".to_string());
@@ -1429,7 +1433,7 @@ mod tests {
         assert!(err.message.contains("/dev/sdc1"));
         assert!(err.hint.is_some());
 
-        // 精确的设备名不受卷标歧义影响
+        // An exact device name is unaffected by label ambiguity
         assert_eq!(resolve_device(&devices, "sdc1").unwrap().path, "/dev/sdc1");
     }
 
@@ -1446,7 +1450,7 @@ mod tests {
         let disk = find_by_name(&devices, "sdb").unwrap();
         assert_eq!(top_level_name(&devices, &disk), "sdb");
 
-        // 父子关系成环时必须终止
+        // A parent/child cycle must always terminate
         let mut first = sample_device("sdx");
         first.parent = Some("sdy".to_string());
         let mut second = sample_device("sdy");
@@ -1502,7 +1506,7 @@ mod tests {
         assert!(!names.contains("sdc"), "数据盘不应被当成系统盘");
         assert!(!names.contains("proc"));
 
-        // 空挂载表不产生系统盘
+        // An empty mount table yields no system disks
         assert!(system_disk_names(&devices, &[]).is_empty());
     }
 }

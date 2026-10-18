@@ -1,4 +1,4 @@
-//! 应用服务层：守护进程事件循环、控制接口与设备视图。
+//! Application service layer: daemon event loop, control interface and device view.
 
 pub mod ctl;
 pub mod daemon;

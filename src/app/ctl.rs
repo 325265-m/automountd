@@ -1,10 +1,11 @@
-//! 控制接口：Unix socket + 行协议（不使用 serde）。
+//! Control interface: Unix socket + line protocol (no serde).
 //!
-//! 请求：`1<TAB>命令<TAB>参数...`；响应：`OK` 后跟 `M<TAB>键<TAB>值` 元信息行
-//! 与 `R<TAB>字段...` 数据行，或 `ERR<TAB>代码<TAB>消息`。
+//! Request: `1<TAB>command<TAB>args...`; response: `OK` followed by `M<TAB>key<TAB>value`
+//! metadata lines and `R<TAB>fields...` data lines, or `ERR<TAB>code<TAB>message`.
 //!
-//! 各字段使用百分号转义（`%25`/`%09`/`%0A`/`%0D`），保证一行一条消息、
-//! 一条消息内以 TAB 分隔时不产生歧义。协议保持向后兼容：版本号变化即拒绝。
+//! Every field is percent-escaped (`%25`/`%09`/`%0A`/`%0D`) so that one line is one
+//! message and TAB-separated messages are unambiguous. The protocol stays backward
+//! compatible: a version change is rejected.
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
@@ -16,28 +17,28 @@ use std::time::Duration;
 use crate::config::Config;
 use crate::error::{Error, ErrorKind, Result};
 
-/// 当前协议版本。
+/// Current protocol version.
 const PROTOCOL_VERSION: &str = "1";
-/// Unix socket 路径长度上限（`sun_path` 为 108 字节，留出余量）。
+/// Upper bound on a Unix socket path (`sun_path` is 108 bytes; leave some headroom).
 #[cfg_attr(not(unix), allow(dead_code))]
 const MAX_SOCKET_PATH: usize = 100;
-/// 单次控制调用的默认超时。
+/// Default timeout for a single control call.
 #[cfg_attr(not(unix), allow(dead_code))]
 const DEFAULT_JOB_TIMEOUT: Duration = Duration::from_secs(30);
-/// 单个请求的最大字节数，防止恶意/故障客户端无限增长内存。
+/// Cap on the bytes of one request, so a malicious or broken client cannot grow memory forever.
 #[cfg_attr(not(unix), allow(dead_code))]
 const MAX_REQUEST_BYTES: u64 = 64 * 1024;
-/// 单个响应的最大字节数（客户端侧限制）。
+/// Cap on the bytes of one response (client-side limit).
 #[cfg_attr(not(unix), allow(dead_code))]
 const MAX_RESPONSE_BYTES: usize = 4 * 1024 * 1024;
-/// 同时处理的连接数上限。
+/// Cap on concurrently handled connections.
 #[cfg_attr(not(unix), allow(dead_code))]
 const MAX_CONNECTIONS: usize = 32;
-/// 响应结束标记，客户端读到它才停止。
+/// End-of-response marker; the client stops only once it reads this.
 #[cfg_attr(not(unix), allow(dead_code))]
 const END_MARKER: &str = "END";
 
-/// 单个字段的百分号转义（只转义会破坏行/TAB 结构的字符）。
+/// Percent-escape a single field (only characters that would break the line/TAB structure).
 fn encode_field(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     for ch in text.chars() {
@@ -52,7 +53,7 @@ fn encode_field(text: &str) -> String {
     out
 }
 
-/// `encode_field` 的逆过程；非法转义原样保留。
+/// Inverse of `encode_field`; invalid escapes are kept verbatim.
 fn decode_field(text: &str) -> String {
     let bytes = text.as_bytes();
     let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
@@ -233,7 +234,8 @@ impl CtlResponse {
                         "R" => response
                             .rows
                             .push(parts.iter().skip(1).map(|f| decode_field(f)).collect()),
-                        // 未知行忽略，便于未来扩展而不破坏旧客户端。
+                        // Unknown lines are ignored so the protocol can grow without
+                        // breaking old clients.
                         _ => {}
                     }
                 }
@@ -259,14 +261,14 @@ impl CtlResponse {
     }
 }
 
-/// 服务端收到的一次调用；守护进程处理完后通过 `reply` 返回。
+/// One call received by the server; the daemon answers through `reply` once it is done.
 pub struct CtlJob {
     pub request: CtlRequest,
     pub peer_uid: u32,
     pub reply: Sender<CtlResponse>,
 }
 
-/// 监听控制 socket，把请求转发给守护进程主循环。
+/// Listen on the control socket and forward requests to the daemon main loop.
 pub struct CtlServer {
     path: PathBuf,
     #[cfg_attr(not(unix), allow(dead_code))]
@@ -284,7 +286,8 @@ pub struct CtlServer {
 
 impl CtlServer {
     pub fn new(config: &Config, jobs: Sender<CtlJob>) -> Self {
-        // 挂载可能比默认 30 秒更久（大容量机械盘、日志重放），服务端必须等得住。
+        // A mount can take longer than the default 30 seconds (large spinning disks,
+        // journal replay), so the server must be able to wait it out.
         let last_resort = config
             .mount_timeout_seconds
             .max(config.unmount_timeout_seconds)
@@ -349,8 +352,9 @@ impl CtlServer {
                 }
             }
         }
-        // 上次异常退出可能留下死 socket，先清理；若仍有人监听则拒绝启动，
-        // 避免两个守护进程抢同一个接口。
+        // An abnormal exit may leave a dead socket behind, so clean up first; if something
+        // still listens there, refuse to start rather than let two daemons fight over the
+        // same interface.
         if self.path.exists() {
             if std::os::unix::net::UnixStream::connect(&self.path).is_ok() {
                 return Err(Error::config(format!(
@@ -374,7 +378,8 @@ impl CtlServer {
             )
             .with_hint("请确认目录存在，且没有其他 automountd 实例在运行")
         })?;
-        // 允许普通用户连接，真正的权限检查由 ctl_allowed_users + peer_uid 完成。
+        // Let regular users connect; the real permission check is done by
+        // ctl_allowed_users + peer_uid.
         let _ = std::fs::set_permissions(&self.path, std::fs::Permissions::from_mode(0o666));
         listener.set_nonblocking(true).map_err(|err| {
             Error::new(
@@ -386,7 +391,7 @@ impl CtlServer {
             .try_clone()
             .map_err(|err| Error::new(ErrorKind::Io, format!("无法复制控制 socket 句柄: {err}")))?;
         self.listener = Some(listener);
-        // stop() 之后允许再次 start()。
+        // After stop(), start() may be called again.
         self.stop.store(false, Ordering::SeqCst);
 
         let jobs = self.jobs.clone();
@@ -440,7 +445,8 @@ impl CtlServer {
         self.stop.store(true, Ordering::SeqCst);
         #[cfg(unix)]
         {
-            // 先释放监听器再删除路径，避免新连接落到已删除的 inode 上。
+            // Release the listener before removing the path, so new connections do not
+            // land on a deleted inode.
             self.listener.take();
             if self.path.exists() {
                 let _ = std::fs::remove_file(&self.path);
@@ -455,16 +461,18 @@ impl CtlServer {
         &self.path
     }
 
-    /// 重新加载配置后同步服务端等待上限，避免“客户端还在等、服务端已超时”。
+    /// Sync the server-side wait cap after a config reload, avoiding the case where the
+    /// client is still waiting while the server has already timed out.
     pub fn set_job_timeout(&mut self, timeout: Duration) {
         self.job_timeout
             .store(timeout.as_secs().max(1), Ordering::SeqCst);
     }
 }
 
-/// 读取对端 uid（Linux `SO_PEERCRED`）。
+/// Read the peer uid (Linux `SO_PEERCRED`).
 ///
-/// 失败必须返回错误而不是 0：0 是 root，fail-open 会让任意本地用户获得最高权限。
+/// Failure must return an error rather than 0: 0 is root, and failing open would hand
+/// any local user the highest privileges.
 #[cfg(unix)]
 fn peer_uid(stream: &std::os::unix::net::UnixStream) -> Result<u32> {
     #[cfg(target_os = "linux")]
@@ -543,7 +551,8 @@ fn handle_connection(
 ) {
     use std::io::{BufRead, BufReader, Read, Write};
 
-    // 首包最多等 10 秒，避免只连不发的连接长期占用线程。
+    // Wait at most 10 seconds for the first packet, so connect-only connections cannot
+    // hog a thread for long.
     let _ = stream.set_read_timeout(Some(Duration::from_secs(10)));
     let _ = stream.set_write_timeout(Some(Duration::from_secs(30)));
 
@@ -627,7 +636,8 @@ fn handle_connection(
     write_response(&mut stream, &response);
 }
 
-/// 连接控制 socket，超时后放弃（std 没有 `connect_timeout`，用线程包一层）。
+/// Connect to the control socket, giving up after the timeout (std has no
+/// `connect_timeout`, so it is wrapped in a thread).
 #[cfg(unix)]
 fn connect_with_timeout(
     socket: &Path,
@@ -662,7 +672,7 @@ fn connect_with_timeout(
     }
 }
 
-/// 读取一个完整响应：多行内容直到 `END` 行（或对端关闭）。
+/// Read one complete response: multi-line content up to the `END` line (or peer close).
 #[cfg_attr(not(unix), allow(dead_code))]
 fn read_response_text<R: std::io::BufRead>(reader: &mut R) -> Result<String> {
     let mut text = String::new();
@@ -690,7 +700,7 @@ fn read_response_text<R: std::io::BufRead>(reader: &mut R) -> Result<String> {
     Ok(text)
 }
 
-/// 客户端发送一次请求并等待响应。
+/// Client side: send one request and wait for the response.
 pub fn request(socket: &Path, request: &CtlRequest, timeout: Duration) -> Result<CtlResponse> {
     #[cfg(unix)]
     {
@@ -714,7 +724,8 @@ pub fn request(socket: &Path, request: &CtlRequest, timeout: Duration) -> Result
             })?;
 
         let mut reader = BufReader::new(stream);
-        // 响应是多行的：服务器以 END 行结束（旧版本/异常退出则读到 EOF）。
+        // The response is multi-line: the server terminates it with an END line
+        // (an old version or an abnormal exit leaves us with EOF instead).
         let text = read_response_text(&mut reader)?;
         CtlResponse::decode(&text)
     }
@@ -728,7 +739,7 @@ pub fn request(socket: &Path, request: &CtlRequest, timeout: Duration) -> Result
     }
 }
 
-/// 守护进程是否在运行（能连上 socket）。
+/// Whether the daemon is running (the socket can be connected to).
 pub fn is_running(socket: &Path) -> bool {
     #[cfg(unix)]
     {
@@ -741,7 +752,7 @@ pub fn is_running(socket: &Path) -> bool {
     }
 }
 
-/// 控制 socket 的默认路径（避免 CLI 直接拼字符串）。
+/// Default path of the control socket (so the CLI does not build the string itself).
 pub fn default_socket(config: &Config) -> PathBuf {
     config.ctl_socket.clone()
 }
@@ -786,7 +797,8 @@ mod tests {
         let encoded = request.encode();
         assert!(encoded.starts_with("1\tmount\t"));
         assert!(!encoded.contains('\n'), "编码后不能含换行: {encoded}");
-        // 字段内的 TAB 必须被转义，不能凭空多出字段（版本 + 命令 + 4 个参数）
+        // A TAB inside a field must be escaped, so no extra fields appear
+        // (version + command + 4 args)
         assert_eq!(encoded.split('\t').count(), 6);
         let decoded = CtlRequest::decode(&encoded).unwrap();
         assert_eq!(decoded, request);
@@ -804,7 +816,7 @@ mod tests {
         assert!(err.message.contains("命令名"));
 
         assert!(CtlRequest::decode("").is_err());
-        // 末尾换行应被容忍（socket 按行读取）
+        // A trailing newline must be tolerated (the socket is read line by line)
         assert_eq!(
             CtlRequest::decode("1\tlist\n").unwrap(),
             CtlRequest::new("list")
@@ -827,16 +839,16 @@ mod tests {
         assert_eq!(decoded.meta_value("说明"), Some("制表\t与换行\n都在这里"));
         assert_eq!(decoded.rows[1][1], "100%");
 
-        // 空响应体
+        // Empty response body
         assert_eq!(
             CtlResponse::decode(&CtlResponse::success().encode()).unwrap(),
             CtlResponse::success()
         );
-        // 未知行忽略，兼容未来扩展
+        // Unknown lines are ignored, keeping room for future extensions
         let decoded = CtlResponse::decode("OK\nX\t扩展\t数据\nM\tk\tv\n").unwrap();
         assert_eq!(decoded.meta_value("k"), Some("v"));
         assert!(decoded.rows.is_empty());
-        // 空行（例如末尾多一个换行）也应忽略
+        // Blank lines (e.g. one extra trailing newline) must be ignored too
         assert!(CtlResponse::decode("OK\n\n\n").unwrap().ok);
     }
 
@@ -852,7 +864,7 @@ mod tests {
         assert_eq!(decoded.message, "需要 root 权限\t请用 sudo");
         assert!(decoded.meta.is_empty() && decoded.rows.is_empty());
 
-        // 无法识别的响应头
+        // Unrecognised response header
         assert!(CtlResponse::decode("WAT\t?").is_err());
         assert!(CtlResponse::decode("").is_err());
     }
@@ -922,7 +934,7 @@ mod tests {
         assert_eq!(response.rows[0][1], "U 盘\tA");
         waiter.join().unwrap();
 
-        // 服务端拒绝非法请求，不应阻塞
+        // The server rejects the invalid request but must not block
         let bad = request(
             &config.ctl_socket,
             &CtlRequest::new("status"),

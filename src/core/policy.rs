@@ -1,11 +1,12 @@
-//! 自动挂载策略：决定某个设备是否应该被挂载。
+//! Automatic mount policy: decides whether a device should be mounted.
 
 use std::collections::HashSet;
 
 use crate::config::Config;
 use crate::model::{BlockDevice, Decision, MountEntry, NON_DATA_TYPES};
 
-/// 小于该容量的设备不自动挂载（避免误挂 EFI/引导分区碎片）。
+/// Devices smaller than this are not mounted automatically (avoids accidentally mounting EFI or
+/// boot partition leftovers).
 pub const MIN_SIZE_BYTES: u64 = 4 * 1024 * 1024;
 
 fn on_system_disk(device: &BlockDevice, system_disks: &HashSet<String>) -> bool {
@@ -55,7 +56,7 @@ fn ignored_fstype(device: &BlockDevice, config: &Config) -> bool {
     }
 }
 
-/// 热插拔 / 开机时的自动挂载判定。
+/// Automatic mount decision for hotplug / boot.
 pub fn should_automount(
     device: &BlockDevice,
     config: &Config,
@@ -111,7 +112,7 @@ pub fn should_automount(
     Decision::allow("ok")
 }
 
-/// 手动挂载（命令行 / 交互界面）时的安全检查。
+/// Safety checks for a manual mount (command line / interactive interface).
 pub fn should_mount_manual(
     device: &BlockDevice,
     config: &Config,

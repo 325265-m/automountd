@@ -1,7 +1,7 @@
-//! 运行期状态：已挂载记录 + 守护进程元信息。
+//! Runtime state: mounted records plus daemon metadata.
 //!
-//! 文件格式为带注释的 TSV（`<state_dir>/state.tsv`），权限 0644，
-//! 供非 root 用户执行 `automountd status/list` 时读取。
+//! The file format is a commented TSV (`<state_dir>/state.tsv`) with mode 0644,
+//! read by non-root users running `automountd status/list`.
 //!
 //! ```text
 //! # automountd state v1
@@ -12,7 +12,7 @@
 //! mount\t<device>\t<target>\t<fstype>\t<driver>\t<uuid>\t<label>\t<owner_uid>\t<reason>\t<mounted_at>\t<options>
 //! ```
 //!
-//! 所有字段都做百分号转义，避免卷标里的 TAB / 换行破坏行结构。
+//! Every field is percent-escaped so TAB / newlines in labels cannot break the line structure.
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -42,7 +42,8 @@ impl State {
         Self {
             path: config.state_dir.join(STATE_FILE),
             records: BTreeMap::new(),
-            // 只有守护进程启动时才写入 pid/时间；CLI 读取不到文件时不应伪装成“上次运行”。
+            // pid/time are written only when the daemon starts; a CLI that cannot read the
+            // file must not pretend to show a "previous run".
             pid: 0,
             started_at: 0,
             dry_run: config.dry_run,
@@ -50,7 +51,7 @@ impl State {
         }
     }
 
-    /// 创建状态目录（0755）。
+    /// Create the state directory (0755).
     pub fn prepare(&self) -> Result<()> {
         let dir = self.directory();
         fs::create_dir_all(&dir).map_err(|err| {
@@ -68,7 +69,7 @@ impl State {
         Ok(())
     }
 
-    /// 读取磁盘上的状态，文件缺失不算错误。
+    /// Load the state from disk; a missing file is not an error.
     pub fn load(&mut self) -> Result<()> {
         self.records.clear();
         let text = match fs::read_to_string(&self.path) {
@@ -118,7 +119,7 @@ impl State {
         Ok(())
     }
 
-    /// 原子写入状态文件。
+    /// Atomically write the state file.
     pub fn save(&self) -> Result<()> {
         let dir = self.directory();
         fs::create_dir_all(&dir).map_err(|err| {
@@ -237,7 +238,7 @@ impl State {
     }
 }
 
-/// 构造并加载状态（忽略读取错误）。
+/// Build and load the state (read errors are ignored).
 pub fn read_state(config: &Config) -> State {
     let mut state = State::new(config);
     if let Err(err) = state.load() {
@@ -268,7 +269,7 @@ fn none_if_empty(value: &str) -> Option<String> {
     }
 }
 
-/// 把一条记录编码成 TAB 分隔的字段（不含行首的 `mount\t`）。
+/// Encode one record into TAB-separated fields (without the leading `mount\t`).
 fn encode_mount_line(record: &MountRecord) -> String {
     let fields = [
         record.device.clone(),
@@ -405,7 +406,7 @@ mod tests {
         let encoded = encode_field(raw);
         assert_eq!(encoded, "a%25b%09c%0Ad%0De");
         assert_eq!(decode_field(&encoded), raw);
-        // 非合法转义保持原样
+        // Invalid escapes are kept verbatim
         assert_eq!(decode_field("100%zz"), "100%zz");
         assert_eq!(decode_field("50%"), "50%");
     }

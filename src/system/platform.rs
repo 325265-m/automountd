@@ -1,13 +1,14 @@
-//! 平台相关的最小封装（Linux / 其他 Unix / Windows 测试环境）。
+//! Minimal platform wrappers (Linux / other Unix / Windows test environments).
 //!
-//! 不引入 `libc` crate：直接声明所需的 C 函数，Linux 上链接到 glibc/musl。
+//! No `libc` crate: the required C functions are declared directly and linked
+//! against glibc/musl on Linux.
 
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::error::{Error, Result};
 
-/// SIGINT/SIGTERM 到达时置位。
+/// Set when SIGINT/SIGTERM arrives.
 pub static STOP_REQUESTED: AtomicBool = AtomicBool::new(false);
 
 pub fn stop_requested() -> bool {
@@ -44,7 +45,7 @@ extern "C" fn handle_signal(_signal: std::os::raw::c_int) {
     STOP_REQUESTED.store(true, Ordering::SeqCst);
 }
 
-/// 当前有效 uid；非 Unix 平台返回 0（便于在 Windows 上跑 dry-run 测试）。
+/// Current effective uid; 0 on non-Unix platforms (so dry-run tests can run on Windows).
 pub fn euid() -> u32 {
     #[cfg(unix)]
     {
@@ -60,7 +61,7 @@ pub fn is_root() -> bool {
     euid() == 0
 }
 
-/// 修改文件所有者。
+/// Change the owner of a file.
 pub fn chown(path: &Path, uid: u32, gid: u32) -> std::io::Result<()> {
     #[cfg(unix)]
     {
@@ -82,7 +83,7 @@ pub fn chown(path: &Path, uid: u32, gid: u32) -> std::io::Result<()> {
     }
 }
 
-/// 标准输出是否连接终端（决定是否输出颜色）。
+/// Whether stdout is attached to a terminal (decides whether color is emitted).
 pub fn stdout_is_tty() -> bool {
     #[cfg(unix)]
     {
@@ -94,7 +95,7 @@ pub fn stdout_is_tty() -> bool {
     }
 }
 
-/// 安装 SIGINT/SIGTERM 处理器；必须在主线程调用。
+/// Install the SIGINT/SIGTERM handlers; must be called on the main thread.
 pub fn install_signal_handlers() -> Result<()> {
     #[cfg(unix)]
     {
@@ -106,7 +107,7 @@ pub fn install_signal_handlers() -> Result<()> {
     Ok(())
 }
 
-/// 向进程发送 SIGTERM，用于停止子进程（如 udevadm monitor）。
+/// Send SIGTERM to a process, used to stop child processes (e.g. `udevadm monitor`).
 pub fn terminate_process(pid: u32) -> bool {
     #[cfg(unix)]
     {
@@ -122,7 +123,7 @@ pub fn terminate_process(pid: u32) -> bool {
     }
 }
 
-/// 强制杀死进程。
+/// Kill a process forcefully.
 pub fn kill_process(pid: u32) -> bool {
     #[cfg(unix)]
     {
@@ -138,7 +139,7 @@ pub fn kill_process(pid: u32) -> bool {
     }
 }
 
-/// 进程是否仍然存在（只做信号 0 检测需要额外 FFI，这里用 /proc 判断）。
+/// Whether the process still exists (a signal-0 probe needs extra FFI, so /proc is used instead).
 pub fn process_alive(pid: u32) -> bool {
     #[cfg(target_os = "linux")]
     {
@@ -151,7 +152,7 @@ pub fn process_alive(pid: u32) -> bool {
     }
 }
 
-/// 当前进程是否 root，否则返回统一错误。
+/// Require the current process to be root, otherwise return the shared error.
 pub fn require_root(operation: &str) -> Result<()> {
     if is_root() {
         return Ok(());
@@ -160,7 +161,7 @@ pub fn require_root(operation: &str) -> Result<()> {
         .with_hint("请使用 sudo，或先启动 automountd 服务后通过 'automountd mount ...' 执行"))
 }
 
-/// 当前时间（Unix 秒）。
+/// Current time (Unix seconds).
 pub fn now_epoch() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

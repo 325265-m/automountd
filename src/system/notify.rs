@@ -1,4 +1,4 @@
-//! 桌面通知（可选，失败不影响挂载）。
+//! Desktop notifications (optional; a failure never affects mounting).
 
 use std::time::Duration;
 
@@ -9,10 +9,10 @@ use crate::model::UserInfo;
 use crate::platform;
 use crate::sessions;
 
-/// notify-send 的超时；通知卡住时不能拖住挂载流程。
+/// Timeout for notify-send; a stuck notification must not block the mount path.
 const NOTIFY_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// 给桌面用户发通知；任何失败都返回 false。
+/// Notify the desktop user; any failure returns false.
 pub fn send(
     config: &Config,
     runner: &dyn CommandRunner,
@@ -29,7 +29,7 @@ pub fn send(
         return false;
     }
 
-    // 未指定用户时自动识别桌面用户（与服务端同一套逻辑）。
+    // When no user is given, detect the desktop user (same logic as the daemon).
     let detected = if user.is_none() {
         sessions::console_user(runner, config.user.as_deref())
     } else {
@@ -104,7 +104,8 @@ pub fn notify_error(
     send(config, runner, user, title, detail, "critical")
 }
 
-/// 组装 `notify-send` 调用；root 且存在普通用户时借用 runuser 切到该用户的环境。
+/// Assemble the `notify-send` invocation; when running as root with a regular user present,
+/// borrow runuser to enter that user's environment.
 fn build_notification(
     runner: &dyn CommandRunner,
     user: &UserInfo,
@@ -145,7 +146,7 @@ fn build_notification(
     (program, argv)
 }
 
-/// 只接受 notify-send 认识的紧急级别。
+/// Accept only the urgency levels notify-send understands.
 fn normalize_urgency(urgency: &str) -> &'static str {
     match urgency.trim().to_ascii_lowercase().as_str() {
         "low" => "low",
@@ -274,7 +275,7 @@ mod tests {
             .map(String::from)
             .collect::<Vec<String>>()
         );
-        // runuser 不可用时即使是 root 也直接调用 notify-send
+        // Without runuser, notify-send is called directly even as root
         let runner = MockRunner::new().missing("runuser");
         let (program, argv) = build_notification(
             &runner,
@@ -302,8 +303,9 @@ mod tests {
         ));
         let calls = runner.calls();
         assert_eq!(calls.len(), 1);
-        // root 环境（含 Windows 测试机，platform::euid() 返回 0）会走 runuser；
-        // 非 root（普通 Linux 用户）直接调用 notify-send。
+        // A root environment (including Windows test machines, where platform::euid()
+        // returns 0) goes through runuser; non-root (a normal Linux user) calls
+        // notify-send directly.
         let program = if platform::euid() == 0 {
             assert_eq!(calls[0].0, "runuser");
             assert!(calls[0].1.iter().any(|arg| arg == "notify-send"));
@@ -315,7 +317,7 @@ mod tests {
         assert!(calls[0].1.iter().any(|arg| arg == "low"));
         assert!(calls[0].1.iter().any(|arg| arg == "磁盘已自动挂载"));
 
-        // 实际执行的程序返回非 0 时 send 必须返回 false
+        // send must return false when the program actually run exits non-zero
         let runner = MockRunner::new().respond(
             program,
             CommandOutput::failure(1, "Cannot autolaunch D-Bus"),
@@ -354,8 +356,8 @@ mod tests {
         assert_eq!(normalize_urgency(""), "normal");
         assert_eq!(normalize_urgency("unknown"), "normal");
 
-        // notify_error 用 critical：root 且无普通用户时直接跳过，
-        // 因此只在真正调用了通知程序时检查参数。
+        // notify_error uses critical: as root with no regular user it bails out early,
+        // so the arguments are only checked when a notification program really ran.
         let config = Config::default();
         let runner = MockRunner::new();
         let _ = notify_error(&config, &runner, "挂载失败", "/dev/sdb1: NTFS 不一致", None);

@@ -1,6 +1,6 @@
-//! 登录会话与桌面用户识别。
+//! Login sessions and desktop-user detection.
 //!
-//! 顺序：配置指定 -> sudo/pkexec 环境变量 -> loginctl 活动会话 -> 当前 uid -> 首个普通用户。
+//! Order: explicit config -> sudo/pkexec environment variables -> loginctl active session -> current uid -> first regular user.
 
 use std::collections::BTreeMap;
 use std::time::Duration;
@@ -10,23 +10,23 @@ use crate::logging;
 use crate::model::UserInfo;
 use crate::platform;
 
-/// `/etc/passwd` 路径。
+/// Path to `/etc/passwd`.
 const PASSWD_PATH: &str = "/etc/passwd";
-/// 查询用户时的命令超时（getent/loginctl 不应拖住守护进程）。
+/// Command timeout for user lookups (getent/loginctl must not stall the daemon).
 const LOOKUP_TIMEOUT: Duration = Duration::from_secs(5);
-/// 普通用户 uid 下界。
+/// Lower bound of a human user uid.
 const HUMAN_UID_MIN: u32 = 1000;
-/// 普通用户 uid 上界（不含）。
+/// Upper bound (exclusive) of a human user uid.
 const HUMAN_UID_MAX: u32 = 65534;
-/// 依次尝试的代理环境变量（sudo / pkexec / doas）。
+/// Proxy environment variables tried in order (sudo / pkexec / doas).
 const PROXY_ENV_KEYS: [&str; 3] = ["SUDO_USER", "PKEXEC_USER", "DOAS_USER"];
 
-/// 解析 `/etc/passwd` 风格的一行。
+/// Parse one `/etc/passwd`-style line.
 pub fn parse_passwd_line(line: &str) -> Option<UserInfo> {
     parse_passwd_fields(line).map(|(user, _shell)| user)
 }
 
-/// 解析一行并同时返回登录 shell（`first_human_user` 需要）。
+/// Parse a line and also return the login shell (`first_human_user` needs it).
 fn parse_passwd_fields(line: &str) -> Option<(UserInfo, String)> {
     let line = line.trim();
     if line.is_empty() || line.starts_with('#') {
@@ -60,7 +60,7 @@ fn parse_passwd_fields(line: &str) -> Option<(UserInfo, String)> {
     ))
 }
 
-/// 按用户名查询（getent -> /etc/passwd）。
+/// Look up by user name (getent -> /etc/passwd).
 pub fn lookup_user(runner: &dyn CommandRunner, name: &str) -> Option<UserInfo> {
     let name = name.trim();
     if name.is_empty() {
@@ -78,7 +78,7 @@ pub fn lookup_user(runner: &dyn CommandRunner, name: &str) -> Option<UserInfo> {
         .map(|(user, _)| user)
 }
 
-/// 按 uid 查询。
+/// Look up by uid.
 pub fn lookup_uid(runner: &dyn CommandRunner, uid: u32) -> Option<UserInfo> {
     let key = uid.to_string();
     if let Some((user, _)) = getent_entries(runner, &key)
@@ -93,12 +93,12 @@ pub fn lookup_uid(runner: &dyn CommandRunner, uid: u32) -> Option<UserInfo> {
         .map(|(user, _)| user)
 }
 
-/// 返回应当拥有挂载点的桌面用户。
+/// Return the desktop user that should own the mount points.
 pub fn console_user(runner: &dyn CommandRunner, configured: Option<&str>) -> Option<UserInfo> {
     console_user_impl(runner, configured, &|key| std::env::var(key).ok())
 }
 
-/// 便于测试的内核实现：环境变量通过闭包注入。
+/// Testable core implementation: environment variables are injected through a closure.
 fn console_user_impl(
     runner: &dyn CommandRunner,
     configured: Option<&str>,
@@ -155,20 +155,21 @@ fn console_user_impl(
     first_human_user(runner)
 }
 
-/// 当前进程 uid。
+/// uid of the current process.
 pub fn current_uid() -> u32 {
     platform::euid()
 }
 
-/// 首选普通用户（uid >= 1000 且 shell 可登录）。
+/// Preferred regular user (uid >= 1000 with a login shell).
 pub fn first_human_user(runner: &dyn CommandRunner) -> Option<UserInfo> {
-    // 有意不使用 runner：/etc/passwd 是判断"人"的最可靠来源。
+    // Deliberately does not use the runner: /etc/passwd is the most reliable source
+    // for telling who a "human" is.
     let _ = runner;
     let text = std::fs::read_to_string(PASSWD_PATH).ok()?;
     pick_human_user(&text)
 }
 
-/// 从 `/etc/passwd` 文本里挑出 uid 最小的可登录普通用户。
+/// Pick the regular user with the lowest uid that can log in from `/etc/passwd` text.
 fn pick_human_user(text: &str) -> Option<UserInfo> {
     let mut best: Option<UserInfo> = None;
     for line in text.lines() {
@@ -190,7 +191,7 @@ fn pick_human_user(text: &str) -> Option<UserInfo> {
     best
 }
 
-/// 解析 `loginctl list-sessions --no-legend` 为 (session_id, uid, user)。
+/// Parse `loginctl list-sessions --no-legend` into (session_id, uid, user).
 pub fn parse_session_rows(text: &str) -> Vec<(String, String, String)> {
     let mut rows = Vec::new();
     for line in text.lines() {
@@ -198,7 +199,7 @@ pub fn parse_session_rows(text: &str) -> Vec<(String, String, String)> {
         if columns.len() < 3 {
             continue;
         }
-        // 第 2 列必须是数字 uid，才能跳过表头与噪声行。
+        // Column 2 must be a numeric uid, which is what skips the header and noise lines.
         if columns[1].is_empty() || !columns[1].chars().all(|ch| ch.is_ascii_digit()) {
             continue;
         }
@@ -211,7 +212,7 @@ pub fn parse_session_rows(text: &str) -> Vec<(String, String, String)> {
     rows
 }
 
-/// 解析 `loginctl show-session ... -p Key` 输出。
+/// Parse `loginctl show-session ... -p Key` output.
 pub fn parse_session_properties(text: &str) -> BTreeMap<String, String> {
     let mut properties = BTreeMap::new();
     for line in text.lines() {
@@ -227,7 +228,7 @@ pub fn parse_session_properties(text: &str) -> BTreeMap<String, String> {
     properties
 }
 
-/// 通过 loginctl 找出图形会话（其次终端）对应的用户。
+/// Use loginctl to find the user behind the graphical session (falling back to a text console).
 fn active_session_user(runner: &dyn CommandRunner) -> Option<UserInfo> {
     if !runner.which("loginctl") {
         logging::debug("未找到 loginctl，跳过活动会话探测");
@@ -277,7 +278,7 @@ fn active_session_user(runner: &dyn CommandRunner) -> Option<UserInfo> {
             continue;
         }
         let score = session_score(&properties);
-        // show-session 里通常不带用户名；查不到时用 list-sessions 的列兜底。
+        // show-session usually carries no user name; fall back to the list-sessions column.
         let user = lookup_uid(runner, uid).unwrap_or_else(|| UserInfo {
             name: name.clone(),
             uid,
@@ -298,7 +299,7 @@ fn active_session_user(runner: &dyn CommandRunner) -> Option<UserInfo> {
     best.map(|(_, user)| user)
 }
 
-/// 会话优先级：图形会话 > 终端 > 其他；seat0 更高。
+/// Session priority: graphical session > text console > other; seat0 ranks higher.
 fn session_score(properties: &BTreeMap<String, String>) -> u32 {
     let kind = properties
         .get("Type")
@@ -316,7 +317,7 @@ fn session_score(properties: &BTreeMap<String, String>) -> u32 {
     type_score * 10 + seat_score
 }
 
-/// 读取单个会话的属性；失败返回空表（不影响其它会话）。
+/// Read the properties of a single session; on failure return an empty map (other sessions are unaffected).
 fn session_properties(runner: &dyn CommandRunner, session: &str) -> BTreeMap<String, String> {
     const PROPERTIES: [&str; 4] = ["Active", "Remote", "Type", "Seat"];
     let mut args: Vec<&str> = vec!["show-session", session];
@@ -341,7 +342,7 @@ fn session_properties(runner: &dyn CommandRunner, session: &str) -> BTreeMap<Str
     }
 }
 
-/// 用 getent 查询 passwd 条目；getent 不可用或失败时返回空表。
+/// Look up passwd entries with getent; returns an empty map when getent is missing or fails.
 fn getent_entries(runner: &dyn CommandRunner, key: &str) -> Vec<(UserInfo, String)> {
     if !runner.which("getent") {
         return Vec::new();
@@ -363,7 +364,7 @@ fn getent_entries(runner: &dyn CommandRunner, key: &str) -> Vec<(UserInfo, Strin
     }
 }
 
-/// 直接读取 `/etc/passwd`；文件缺失（如 Windows 开发机）时返回空表。
+/// Read `/etc/passwd` directly; returns an empty map when the file is missing (e.g. a Windows dev box).
 fn passwd_entries() -> Vec<(UserInfo, String)> {
     match std::fs::read_to_string(PASSWD_PATH) {
         Ok(text) => parse_passwd_text(&text),
@@ -389,16 +390,16 @@ mod tests {
         assert_eq!(user.gid, 1000);
         assert_eq!(user.home.as_deref(), Some("/home/alice"));
 
-        // home 为空时是 None
+        // An empty home is None
         let user = parse_passwd_line("svc:x:999:999:::/usr/sbin/nologin").unwrap();
         assert_eq!(user.uid, 999);
         assert!(user.home.is_none());
 
-        // home 为 / 这类少见写法也要保留
+        // Rare forms such as home = / must be preserved too
         let user = parse_passwd_line("nfs:x:998:998::/:/usr/sbin/nologin").unwrap();
         assert_eq!(user.home.as_deref(), Some("/"));
 
-        // 非数字 uid、字段不足、空行都不是有效条目
+        // Non-numeric uid, too few fields and blank lines are not valid entries
         assert!(parse_passwd_line("bob:x:abc:100:Bob:/home/bob:/bin/sh").is_none());
         assert!(parse_passwd_line("bob:x:1000:100").is_none());
         assert!(parse_passwd_line("").is_none());
@@ -435,7 +436,7 @@ notanumber x y z
 
     #[test]
     fn prefers_wayland_session_from_loginctl() {
-        // 会话 2 是 tty，会话 5 是 wayland；uid 用 4242 避免落到真实 /etc/passwd。
+        // Session 2 is a tty, session 5 is wayland; uid 4242 avoids hitting the real /etc/passwd.
         let runner = MockRunner::new()
             .respond(
                 "loginctl",
@@ -470,7 +471,7 @@ notanumber x y z
         let user = console_user_impl(&runner, Some("alice"), &|_| None).expect("应返回配置用户");
         assert_eq!(user.name, "alice");
         assert_eq!(user.uid, 4300);
-        // 配置用户命中后不应再去问 loginctl
+        // Once the configured user matches, loginctl must not be asked again
         assert!(!runner.called("loginctl"));
     }
 
@@ -507,7 +508,7 @@ svc:x:1002:1002::/srv:/usr/sbin/nologin
         let user = pick_human_user(&text).expect("应找到普通用户");
         assert_eq!(user.name, "alice");
         assert_eq!(user.uid, 1000);
-        // 只有 root 与 nologin 用户时没有"人"可用
+        // With only root and nologin users there is no "human" available
         assert!(pick_human_user("root:x:0:0::/root:/bin/bash\n").is_none());
         assert!(pick_human_user("svc:x:1000:1000::/srv:/usr/sbin/nologin\n").is_none());
     }
@@ -515,11 +516,12 @@ svc:x:1002:1002::/srv:/usr/sbin/nologin
     #[test]
     fn lookup_falls_back_when_getent_missing() {
         let runner = MockRunner::new().missing("getent");
-        // getent 缺失时只读 /etc/passwd；Windows 上没有该文件，因此只要求不 panic。
+        // When getent is missing only /etc/passwd is read; that file does not exist on
+        // Windows, so the only requirement is not to panic.
         let _ = lookup_user(&runner, "alice");
         let _ = lookup_uid(&runner, 1000);
         assert!(!runner.called("getent"));
-        // current_uid 只是转发 platform::euid()
+        // current_uid merely forwards to platform::euid()
         assert_eq!(current_uid(), platform::euid());
     }
 }

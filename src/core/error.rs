@@ -1,9 +1,9 @@
-//! 统一错误类型。
+//! Unified error type.
 
 use std::fmt;
 use std::io;
 
-/// 错误分类，决定进程退出码与提示方式。
+/// Error category, which determines the process exit code and how the message is reported.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ErrorKind {
     Config,
@@ -45,7 +45,7 @@ impl ErrorKind {
     }
 }
 
-/// 携带可选排查建议的错误。
+/// An error with an optional troubleshooting hint.
 #[derive(Debug, Clone)]
 pub struct Error {
     pub kind: ErrorKind,
@@ -117,14 +117,14 @@ impl From<io::Error> for Error {
     }
 }
 
-/// 给 IO 错误补充上下文。
+/// Add context to an IO error.
 pub fn io_context(context: impl fmt::Display, err: io::Error) -> Error {
     Error::new(ErrorKind::Io, format!("{context}: {err}"))
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
 
-/// 把若干条校验问题汇总成一个配置错误。
+/// Aggregate several validation problems into a single configuration error.
 pub fn config_problems(problems: &[String]) -> Error {
     let mut message = String::from("配置无效:");
     for problem in problems {

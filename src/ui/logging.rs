@@ -1,4 +1,4 @@
-//! 极简日志：输出到 stderr，可被 `--quiet` 压制 info 级别。
+//! Minimal logging: writes to stderr; `--quiet` suppresses the info level.
 
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 

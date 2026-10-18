@@ -129,12 +129,13 @@ automountd doctor
 
 ### 界面语言
 
-CLI/TUI 内置中英文，默认跟随 `LANG` / `AUTOMOUNTD_LANG`，也可用全局选项 `--lang` 强制指定：
+CLI/TUI 跟随 `LANG` / `LC_ALL` / `AUTOMOUNTD_LANG`；未设置或无法识别时默认为英文。
+可用 `--lang` 强制切换：
 
 ```bash
-automountd --lang en list
-automountd --lang zh status
-AUTOMOUNTD_LANG=en automountd doctor
+automountd --lang zh list
+automountd --lang en status
+AUTOMOUNTD_LANG=zh automountd doctor
 ```
 
 `--lang` 必须放在子命令之前。当前英文覆盖帮助、TUI、列表/状态、doctor 与主要命令输出；

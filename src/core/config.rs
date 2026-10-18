@@ -1,9 +1,9 @@
-//! 配置：INI 风格文本、默认值、校验与持久化。
+//! Configuration: INI-style text, defaults, validation, and persistence.
 //!
-//! 当前不引入 serde/TOML，使用轻量 INI 风格解析器。格式示例::
+//! serde/TOML are not used for now; a lightweight INI-style parser is. Example format::
 //!
 //! ```ini
-//! # 挂载根目录
+//! # Mount root
 //! mount_root = "/media"
 //! per_user_dirs = true
 //! allowed_uuids = 1234-ABCD, 5678-EFGH
@@ -28,7 +28,7 @@ pub const ENV_CONFIG: &str = "AUTOMOUNTD_CONFIG";
 pub const SYSTEM_CONFIG: &str = "/etc/automountd/config.conf";
 pub const USER_CONFIG: &str = "~/.config/automountd/config.conf";
 
-/// 给移动磁盘默认加上的安全选项。
+/// Safety options always added by default for removable disks.
 pub const DEFAULT_SAFETY_OPTIONS: &[&str] = &["nosuid", "nodev"];
 
 pub fn default_mount_options() -> BTreeMap<String, Vec<String>> {
@@ -83,12 +83,12 @@ fn strings(items: &[&str]) -> Vec<String> {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Config {
-    // 挂载位置
+    // Mount location
     pub mount_root: PathBuf,
     pub per_user_dirs: bool,
     pub user: Option<String>,
 
-    // 触发策略
+    // Trigger policy
     pub auto_mount_on_hotplug: bool,
     pub auto_mount_on_boot: bool,
     pub auto_mount_internal_disks: bool,
@@ -98,7 +98,7 @@ pub struct Config {
     pub ignored_fstypes: Vec<String>,
     pub read_only_fstypes: Vec<String>,
 
-    // 挂载参数
+    // Mount parameters
     pub mount_options: BTreeMap<String, Vec<String>>,
     pub default_mount_options: Vec<String>,
     pub chown_native_filesystems: bool,
@@ -107,7 +107,7 @@ pub struct Config {
     pub eject_after_unmount: bool,
     pub power_off_after_unmount: bool,
 
-    // 时序
+    // Timing
     pub debounce_seconds: f64,
     pub retry_attempts: u32,
     pub retry_delay_seconds: f64,
@@ -117,22 +117,22 @@ pub struct Config {
     pub poll_interval_seconds: f64,
     pub suppress_remount_seconds: u64,
 
-    // 通知、状态、控制接口
+    // Notifications, state, and control interface
     pub notify: bool,
     pub state_dir: PathBuf,
     pub ctl_socket: PathBuf,
     pub ctl_allowed_users: Vec<String>,
 
-    // fstab 持久化
+    // fstab persistence
     pub fstab_path: PathBuf,
     pub persist_enabled: bool,
 
-    // 日志
+    // Logging
     pub log_level: String,
     pub log_file: Option<String>,
     pub dry_run: bool,
 
-    /// 配置文件来源（不参与序列化）。
+    /// Where the configuration was loaded from (not part of serialization).
     pub path: Option<PathBuf>,
 }
 
@@ -180,7 +180,7 @@ impl Default for Config {
 }
 
 impl Config {
-    /// 按优先级加载：显式路径 -> 环境变量 -> 系统配置 -> 用户配置 -> 默认值。
+    /// Load by priority: explicit path -> environment variable -> system config -> user config -> defaults.
     pub fn load(path: Option<&Path>) -> Result<Self> {
         if let Some(path) = path {
             let expanded = expand_tilde(path);
@@ -458,45 +458,49 @@ impl Config {
             .any(|item| item == wanted)
     }
 
-    /// 生成带注释的配置文件文本。
+    /// Render the configuration file text, including comments.
     pub fn to_conf(&self) -> String {
         let mut out = String::new();
-        out.push_str("# automountd 配置文件\n");
-        out.push_str("# 修改后执行: sudo systemctl restart automountd\n");
-        out.push_str("# 或: sudo automountd reload（无需重启服务）\n\n");
+        out.push_str("# automountd configuration file\n");
+        out.push_str("# After editing: sudo systemctl restart automountd\n");
+        out.push_str("# or: sudo automountd reload (no restart needed)\n\n");
 
-        out.push_str("# 挂载根目录。per_user_dirs=true 时挂载到 <mount_root>/<用户名>/<卷标>\n");
+        out.push_str(
+            "# Mount root. With per_user_dirs=true, mounts go to <mount_root>/<username>/<label>\n",
+        );
         out.push_str(&format!("mount_root = \"{}\"\n", self.mount_root.display()));
         out.push_str("per_user_dirs = ");
         out.push_str(bool_str(self.per_user_dirs));
-        out.push_str("\n# 强制指定挂载点所有者；留空表示自动识别当前桌面登录用户\n");
+        out.push_str(
+            "\n# Force the mount-point owner; empty means detect the current desktop user\n",
+        );
         out.push_str(&format!(
             "user = \"{}\"\n\n",
             self.user.as_deref().unwrap_or("")
         ));
 
-        out.push_str("# ---------- 触发策略 ----------\n");
-        out.push_str("# 插入可移动磁盘时自动挂载\n");
+        out.push_str("# ---------- Trigger policy ----------\n");
+        out.push_str("# Mount removable disks when they are plugged in\n");
         out.push_str(&format!(
             "auto_mount_on_hotplug = {}\n",
             bool_str(self.auto_mount_on_hotplug)
         ));
-        out.push_str("# 服务启动时挂载已插入的磁盘\n");
+        out.push_str("# Mount already-inserted disks when the service starts\n");
         out.push_str(&format!(
             "auto_mount_on_boot = {}\n",
             bool_str(self.auto_mount_on_boot)
         ));
-        out.push_str("# 是否也自动挂载内置 SATA/NVMe 数据盘（默认关闭，避免碰系统盘）\n");
+        out.push_str("# Also auto-mount internal SATA/NVMe data disks (off by default to protect the system disk)\n");
         out.push_str(&format!(
             "auto_mount_internal_disks = {}\n",
             bool_str(self.auto_mount_internal_disks)
         ));
-        out.push_str("# 白名单：非空时只自动挂载这些 UUID（可用于放行内置磁盘）\n");
+        out.push_str("# Allowlist: when non-empty, only these UUIDs are auto-mounted (can allow internal disks)\n");
         out.push_str(&format!(
             "allowed_uuids = {}\n",
             self.allowed_uuids.join(", ")
         ));
-        out.push_str("# 排除列表\n");
+        out.push_str("# Exclusion lists\n");
         out.push_str(&format!(
             "blocked_uuids = {}\n",
             self.blocked_uuids.join(", ")
@@ -514,20 +518,22 @@ impl Config {
             self.read_only_fstypes.join(", ")
         ));
 
-        out.push_str("# ---------- 挂载参数 ----------\n");
-        out.push_str("# 所有设备都会附加的安全选项；ext4/xfs 等原生文件系统同样适用\n");
+        out.push_str("# ---------- Mount parameters ----------\n");
+        out.push_str(
+            "# Safety options appended to every mount, including native ext4/xfs filesystems\n",
+        );
         out.push_str(&format!(
             "default_mount_options = {}\n",
             self.default_mount_options.join(", ")
         ));
-        out.push_str("# 原生文件系统（ext4/xfs/btrfs）是否强行 chown 挂载点（一般不必要）\n");
+        out.push_str("# Chown the mount point even for native filesystems (ext4/xfs/btrfs); usually unnecessary\n");
         out.push_str(&format!(
             "chown_native_filesystems = {}\n",
             bool_str(self.chown_native_filesystems)
         ));
-        out.push_str("# 卸载失败时自动改用 umount -l（lazy）\n");
+        out.push_str("# Fall back to umount -l (lazy) when a normal unmount fails\n");
         out.push_str(&format!("lazy_umount = {}\n", bool_str(self.lazy_umount)));
-        out.push_str("# 卸载后删除空挂载点目录\n");
+        out.push_str("# Remove empty mount-point directories after unmounting\n");
         out.push_str(&format!("cleanup_dirs = {}\n", bool_str(self.cleanup_dirs)));
         out.push_str(&format!(
             "eject_after_unmount = {}\n",
@@ -538,10 +544,10 @@ impl Config {
             bool_str(self.power_off_after_unmount)
         ));
 
-        out.push_str("# ---------- 时序（秒） ----------\n");
-        out.push_str("# udev 事件去抖窗口\n");
+        out.push_str("# ---------- Timing (seconds) ----------\n");
+        out.push_str("# udev event debounce window\n");
         out.push_str(&format!("debounce_seconds = {}\n", self.debounce_seconds));
-        out.push_str("# 挂载失败重试\n");
+        out.push_str("# Mount failure retry policy\n");
         out.push_str(&format!("retry_attempts = {}\n", self.retry_attempts));
         out.push_str(&format!(
             "retry_delay_seconds = {}\n",
@@ -555,50 +561,54 @@ impl Config {
             "unmount_timeout_seconds = {}\n",
             self.unmount_timeout_seconds
         ));
-        out.push_str("# 定期扫描间隔；0 表示关闭\n");
+        out.push_str("# Periodic rescan interval; 0 disables it\n");
         out.push_str(&format!(
             "reconcile_interval_seconds = {}\n",
             self.reconcile_interval_seconds
         ));
-        out.push_str("# 无 udev 环境（容器）改用轮询的间隔；0 表示自动\n");
+        out.push_str(
+            "# Polling interval when udev is unavailable (containers); 0 selects automatically\n",
+        );
         out.push_str(&format!(
             "poll_interval_seconds = {}\n",
             self.poll_interval_seconds
         ));
-        out.push_str("# 用户手动卸载后，多少秒内不再自动挂载\n");
+        out.push_str("# Do not auto-remount for this many seconds after a manual unmount\n");
         out.push_str(&format!(
             "suppress_remount_seconds = {}\n\n",
             self.suppress_remount_seconds
         ));
 
-        out.push_str("# ---------- 通知与接口 ----------\n");
+        out.push_str("# ---------- Notifications and control interface ----------\n");
         out.push_str(&format!("notify = {}\n", bool_str(self.notify)));
         out.push_str(&format!("state_dir = \"{}\"\n", self.state_dir.display()));
         out.push_str(&format!("ctl_socket = \"{}\"\n", self.ctl_socket.display()));
-        out.push_str("# 允许通过控制 socket 操作的用户；* 表示所有本地用户\n");
+        out.push_str(
+            "# Users allowed to operate through the control socket; * means all local users\n",
+        );
         out.push_str(&format!(
             "ctl_allowed_users = {}\n\n",
             self.ctl_allowed_users.join(", ")
         ));
 
-        out.push_str("# ---------- fstab 持久化 ----------\n");
+        out.push_str("# ---------- fstab persistence ----------\n");
         out.push_str(&format!("fstab_path = \"{}\"\n", self.fstab_path.display()));
         out.push_str(&format!(
             "persist_enabled = {}\n\n",
             bool_str(self.persist_enabled)
         ));
 
-        out.push_str("# ---------- 日志 ----------\n");
+        out.push_str("# ---------- Logging ----------\n");
         out.push_str(&format!("log_level = \"{}\"\n", self.log_level));
         out.push_str(&format!(
             "log_file = \"{}\"\n",
             self.log_file.as_deref().unwrap_or("")
         ));
-        out.push_str("# 只打印将要执行的命令，不真正挂载（调试用）\n");
+        out.push_str("# Print commands instead of executing them (debugging)\n");
         out.push_str(&format!("dry_run = {}\n\n", bool_str(self.dry_run)));
 
-        out.push_str("# ---------- 各文件系统挂载选项 ----------\n");
-        out.push_str("# 可用占位符: {uid} {gid} {user} {label}\n");
+        out.push_str("# ---------- Per-filesystem mount options ----------\n");
+        out.push_str("# Available placeholders: {uid} {gid} {user} {label}\n");
         out.push_str("[mount_options]\n");
         for (fstype, options) in &self.mount_options {
             out.push_str(&format!("{fstype} = {}\n", options.join(", ")));
@@ -645,7 +655,8 @@ fn bool_str(value: bool) -> &'static str {
 }
 
 fn check_absolute(problems: &mut Vec<String>, name: &str, path: &Path) {
-    // 同时接受 Windows 路径，便于在开发机上跑单元测试；Linux 上以 `/` 开头即可
+    // Windows paths are accepted too, so the unit tests can run on a development machine;
+    // on Linux a leading `/` is enough.
     let looks_absolute = path.is_absolute() || path.to_string_lossy().starts_with('/');
     if !looks_absolute {
         problems.push(format!("{name} 必须是绝对路径，当前为 {}", path.display()));
@@ -687,7 +698,7 @@ fn expand_tilde(path: &Path) -> PathBuf {
     path.to_path_buf()
 }
 
-/// 去掉行内注释，尊重单双引号与转义。
+/// Strip an inline comment, honoring single quotes, double quotes, and escapes.
 fn strip_comment(line: &str) -> String {
     let mut output = String::with_capacity(line.len());
     let mut in_single = false;
@@ -826,7 +837,7 @@ exfat = uid={uid}
             config.mount_options.get("exfat").unwrap(),
             &vec!["uid={uid}"]
         );
-        // 默认值仍然保留
+        // The defaults are still kept
         assert!(config.mount_options.contains_key("ntfs3"));
     }
 

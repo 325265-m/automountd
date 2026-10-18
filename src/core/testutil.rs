@@ -1,14 +1,15 @@
-//! 测试辅助（非公开 API）。
+//! Test helpers (not public API).
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 static COUNTER: AtomicU64 = AtomicU64::new(0);
 
-/// 自动清理的临时目录。
+/// A temporary directory that cleans itself up.
 ///
-/// 默认放系统临时目录；如果运行环境禁止子进程写系统 temp（例如受限沙箱），
-/// 自动退回到项目内的 `target/test-tmp`，保证测试可重复运行。
+/// The system temporary directory is used by default; when the environment forbids child processes
+/// from writing to the system temp dir (for example a restricted sandbox), it falls back to
+/// `target/test-tmp` inside the project so the tests stay repeatable.
 pub struct TempDir {
     path: PathBuf,
 }

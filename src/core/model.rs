@@ -1,14 +1,14 @@
-//! 跨模块共享的数据结构。
+//! Data structures shared across modules.
 
 use std::path::PathBuf;
 
-/// 永远不当作可挂载数据盘的设备类型。
+/// Device types that are never treated as mountable data disks.
 pub const NON_DATA_TYPES: &[&str] = &[
     "loop", "ram", "zram", "crypt", "lvm", "raid0", "raid1", "raid4", "raid5", "raid6", "raid10",
     "mpath", "nbd", "rbd", "dm",
 ];
 
-/// 一个块设备（整盘或分区）。
+/// A block device (a whole disk or a partition).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BlockDevice {
     pub name: String,
@@ -35,7 +35,7 @@ impl BlockDevice {
         self.dev_type == "part"
     }
 
-    /// 可移动介质，或通过 USB / 读卡器 / IEEE1394 接入。
+    /// Removable media, or attached via USB / card reader / IEEE1394.
     pub fn is_external(&self) -> bool {
         self.removable
             || self.hotplug
@@ -71,7 +71,7 @@ impl BlockDevice {
     }
 }
 
-/// /proc/self/mountinfo 中的一条挂载记录。
+/// One mount record from /proc/self/mountinfo.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MountEntry {
     pub mount_id: u32,
@@ -91,7 +91,7 @@ impl MountEntry {
     }
 }
 
-/// 自动挂载策略的判定结果。
+/// Outcome of the automatic mount policy decision.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Decision {
     pub allowed: bool,
@@ -129,7 +129,7 @@ impl Decision {
     }
 }
 
-/// 中文原因说明。
+/// Human-readable explanation of a reason code.
 pub fn explain(code: &str) -> &'static str {
     match code {
         "ok" => "可自动挂载",
@@ -148,7 +148,7 @@ pub fn explain(code: &str) -> &'static str {
     }
 }
 
-/// 桌面登录用户。
+/// A desktop login user.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UserInfo {
     pub name: String,
@@ -163,7 +163,7 @@ impl UserInfo {
     }
 }
 
-/// 由本守护进程挂载、需要跟踪的记录。
+/// A mount performed by this daemon that has to be tracked.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MountRecord {
     pub device: String,
@@ -178,7 +178,7 @@ pub struct MountRecord {
     pub options: Vec<String>,
 }
 
-/// 设备列表中的一行（设备 + 挂载状态 + 策略结论）。
+/// One row of the device list (device + mount state + policy verdict).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DeviceView {
     pub device: BlockDevice,
@@ -197,7 +197,7 @@ impl DeviceView {
     }
 }
 
-/// 挂载计划（尚未执行）。
+/// A mount plan (not executed yet).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MountPlan {
     pub device: BlockDevice,
@@ -229,7 +229,7 @@ impl MountPlan {
     }
 }
 
-/// 挂载执行结果。
+/// Result of a mount attempt.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MountResult {
     pub device: BlockDevice,

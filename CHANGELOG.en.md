@@ -22,6 +22,9 @@ and this project follows [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- Translated all source comments, example-config comments, install-script messages, and systemd metadata
+  to English. The CLI/TUI now falls back to English when the locale is unset; Chinese remains available via
+  `--lang zh` / `LANG=zh_CN`.
 - Removed the hard "zero third-party dependencies" constraint in favor of a controlled dependency
   review policy; `[dependencies]` is still empty.
 - CI, Makefile, install script, and documentation no longer force `--offline`, so vetted crates can be

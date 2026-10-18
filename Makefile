@@ -28,7 +28,7 @@ install: build
 	chmod 644 $(UNITDIR)/automountd.service
 	install -Dm644 README.md $(DESTDIR)$(PREFIX)/share/doc/automountd/README.md
 	install -d -m755 $(CONFDIR)
-	@echo "已安装二进制与 systemd unit；下一步："
+	@echo "Binary and systemd unit installed. Next steps:"
 	@echo "  sudo automountd config init"
 	@echo "  sudo systemctl daemon-reload && sudo systemctl enable --now automountd"
 

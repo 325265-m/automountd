@@ -1,14 +1,15 @@
-//! 挂载点命名与路径安全。
+//! Mount point naming and path safety.
 
 use std::collections::HashSet;
 use std::path::{Component, Path, PathBuf};
 
 use crate::error::{Error, Result};
 
-/// 把卷标转换成安全的目录名。
+/// Turn a volume label into a safe directory name.
 ///
-/// 允许 Unicode 字母（例如中文卷标）、数字、`.`、`-`、`_`；
-/// 空白与控制字符转成 `_`，其余字符丢弃为 `_`，并去掉开头结尾的点/横线。
+/// Unicode letters (for example Chinese labels), digits, `.`, `-`, and `_` are allowed;
+/// whitespace and control characters become `_`, any other character is dropped to `_`, and leading
+/// or trailing dots and dashes are trimmed off.
 pub fn sanitize_label(label: Option<&str>, fallback: &str) -> String {
     let Some(label) = label else {
         return fallback.to_string();
@@ -38,7 +39,7 @@ pub fn sanitize_label(label: Option<&str>, fallback: &str) -> String {
     }
 }
 
-/// 卷标缺失时用 UUID 前缀或设备名生成目录名。
+/// When the volume label is missing, build a directory name from the UUID prefix or the device name.
 pub fn fallback_label(device_name: &str, uuid: Option<&str>) -> String {
     if let Some(uuid) = uuid {
         let short: String = uuid
@@ -58,7 +59,7 @@ pub fn fallback_label(device_name: &str, uuid: Option<&str>) -> String {
     }
 }
 
-/// 目录已存在时追加 `_2`、`_3`……
+/// Append `_2`, `_3`, ... when the directory already exists.
 pub fn unique_dir(parent: &Path, name: &str, reserved: &HashSet<String>) -> PathBuf {
     let mut candidate = parent.join(name);
     let mut index = 1;
@@ -72,7 +73,7 @@ pub fn unique_dir(parent: &Path, name: &str, reserved: &HashSet<String>) -> Path
     candidate
 }
 
-/// 确认 target 位于 root 之下，返回规范化路径。
+/// Verify that target lies below root and return the normalized path.
 pub fn safe_target(root: &Path, target: &Path) -> Result<PathBuf> {
     let root_real = std::fs::canonicalize(root).map_err(|err| {
         Error::device(format!("挂载根目录 {} 不可用: {err}", root.display()))
@@ -111,10 +112,10 @@ fn canonicalize_allow_missing(path: &Path) -> Result<PathBuf> {
     Ok(parent_real.join(name))
 }
 
-/// 检查 root 到 target 之间已存在的路径组件不是符号链接。
+/// Check that no existing path component between root and target is a symlink.
 ///
-/// 采用词法路径（不先 canonicalize target），否则 root 自身是符号链接时
-/// `strip_prefix` 会失败，检查会被静默跳过。
+/// A lexical path is used (target is not canonicalized first), otherwise `strip_prefix` would fail
+/// when root itself is a symlink and the check would be skipped silently.
 pub fn check_no_symlink_components(root: &Path, target: &Path) -> Result<()> {
     let root_abs = absolute_path(root)?;
     let target_abs = absolute_path(target)?;
@@ -162,7 +163,7 @@ fn absolute_path(path: &Path) -> Result<PathBuf> {
     Ok(cwd.join(path))
 }
 
-/// 终端显示宽度（中文等宽字符按 2 计算）。
+/// Terminal display width (wide characters such as Chinese count as 2).
 pub fn display_width(text: &str) -> usize {
     text.chars().map(char_width).sum()
 }

@@ -1,7 +1,7 @@
-//! 外部命令执行抽象。
+//! Abstraction over external command execution.
 //!
-//! 所有对 `lsblk` / `mount` / `udevadm` 的调用都通过 [`CommandRunner`]，
-//! 测试中用 [`MockRunner`] 替换，避免真正触碰系统。
+//! Every call to `lsblk` / `mount` / `udevadm` goes through [`CommandRunner`];
+//! tests substitute [`MockRunner`] so the real system is never touched.
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::Read;
@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 
 use crate::error::{Error, ErrorKind, Result};
 
-/// 命令执行结果。
+/// Result of a command execution.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CommandOutput {
     pub status: i32,
@@ -49,7 +49,7 @@ impl CommandOutput {
     }
 }
 
-/// 执行外部命令并查询命令是否存在。
+/// Run external commands and check whether a program exists.
 pub trait CommandRunner: Send + Sync {
     fn run(&self, program: &str, args: &[&str], timeout: Option<Duration>)
         -> Result<CommandOutput>;
@@ -57,7 +57,7 @@ pub trait CommandRunner: Send + Sync {
     fn which(&self, program: &str) -> bool;
 }
 
-/// 真正调用操作系统进程。
+/// Actually spawns operating-system processes.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct SystemRunner;
 
@@ -154,7 +154,7 @@ fn read_stream<R: Read>(stream: Option<R>) -> String {
     String::from_utf8_lossy(&buffer).into_owned()
 }
 
-/// 可编排返回值的假执行器，供单元测试使用。
+/// Fake runner with scripted responses, for use in unit tests.
 #[derive(Debug, Default)]
 pub struct MockRunner {
     missing: HashSet<String>,
@@ -167,13 +167,13 @@ impl MockRunner {
         Self::default()
     }
 
-    /// 声明某个命令不存在（`which` 返回 false）。
+    /// Declare a program as missing (`which` returns false).
     pub fn missing(mut self, program: &str) -> Self {
         self.missing.insert(program.to_string());
         self
     }
 
-    /// 追加一次返回值。
+    /// Append one canned response.
     pub fn respond(self, program: &str, output: CommandOutput) -> Self {
         self.push(program, output);
         self

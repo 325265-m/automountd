@@ -139,13 +139,13 @@ Command (m <n> mount, u <n> unmount, r refresh, a all, q quit):
 
 ### UI language
 
-The CLI/TUI supports Chinese and English. It follows `LANG` / `AUTOMOUNTD_LANG` by default, and the
-global `--lang` option can force a language:
+The CLI/TUI follows `LANG` / `LC_ALL` / `AUTOMOUNTD_LANG`; when unset or unrecognized it defaults to
+English. Use `--lang` to force a language:
 
 ```bash
-automountd --lang en list
-automountd --lang zh status
-AUTOMOUNTD_LANG=en automountd doctor
+automountd --lang zh list
+automountd --lang en status
+AUTOMOUNTD_LANG=zh automountd doctor
 ```
 
 `--lang` must appear before the subcommand. English currently covers help, the TUI, list/status,

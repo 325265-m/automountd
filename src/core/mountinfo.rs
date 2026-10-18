@@ -1,18 +1,18 @@
-//! `/proc/self/mountinfo` 解析。
+//! `/proc/self/mountinfo` parsing.
 //!
-//! 格式（Linux 内核文档 proc(5)）::
+//! Format (Linux kernel documentation, proc(5))::
 //!
 //! ```text
 //!     36 35 98:0 /mnt1 /mnt2 rw,noatime master:1 - ext3 /dev/root rw,errors=continue
 //! ```
 //!
-//! 路径中的空格等字符以 `\040` 形式转义。
+//! Characters such as spaces inside paths are escaped as `\040`.
 
 use std::path::Path;
 
 use crate::model::MountEntry;
 
-/// 还原 mountinfo 中的八进制转义。
+/// Decode the octal escapes used by mountinfo.
 pub fn unescape(field: &str) -> String {
     let mut output = String::with_capacity(field.len());
     let mut chars = field.chars().peekable();
@@ -45,7 +45,7 @@ pub fn unescape(field: &str) -> String {
     output
 }
 
-/// 解析 mountinfo 文本。格式异常的行会被跳过。
+/// Parse mountinfo text. Lines with an unexpected format are skipped.
 pub fn parse_mountinfo(text: &str) -> Vec<MountEntry> {
     let mut entries = Vec::new();
     for line in text.lines() {
@@ -81,12 +81,12 @@ pub fn parse_mountinfo(text: &str) -> Vec<MountEntry> {
     entries
 }
 
-/// 读取 `/proc/self/mountinfo`，失败时返回空列表。
+/// Read `/proc/self/mountinfo`, returning an empty list on failure.
 pub fn read_mountinfo() -> Vec<MountEntry> {
     read_mountinfo_from(Path::new("/proc/self/mountinfo"))
 }
 
-/// 从指定文件读取挂载表（测试用）。
+/// Read the mount table from a specific file (used by tests).
 pub fn read_mountinfo_from(path: &Path) -> Vec<MountEntry> {
     match std::fs::read_to_string(path) {
         Ok(text) => parse_mountinfo(&text),
@@ -97,7 +97,7 @@ pub fn read_mountinfo_from(path: &Path) -> Vec<MountEntry> {
     }
 }
 
-/// 规范化路径用于比较：解析符号链接、去掉尾部斜杠。
+/// Normalize a path for comparison: resolve symlinks and strip trailing slashes.
 pub fn normalize_path(path: &str) -> String {
     if let Ok(canonical) = std::fs::canonicalize(path) {
         return canonical.to_string_lossy().into_owned();
@@ -110,7 +110,7 @@ pub fn normalize_path(path: &str) -> String {
     }
 }
 
-/// 按挂载点或设备查找记录（同时给出时要求都匹配）。
+/// Find a record by mount point or device (both must match when both are given).
 pub fn find_mount<'a>(
     mounts: &'a [MountEntry],
     target: Option<&str>,
@@ -133,12 +133,12 @@ pub fn find_mount<'a>(
     })
 }
 
-/// 判断挂载点是否已挂载。
+/// Whether the mount point is already mounted.
 pub fn is_mounted(target: &str, mounts: &[MountEntry]) -> bool {
     find_mount(mounts, Some(target), None).is_some()
 }
 
-/// 返回某设备的所有挂载记录。
+/// Return all mount records for a device.
 pub fn find_by_source<'a>(source: &str, mounts: &'a [MountEntry]) -> Vec<&'a MountEntry> {
     let wanted = normalize_path(source);
     mounts
@@ -147,7 +147,7 @@ pub fn find_by_source<'a>(source: &str, mounts: &'a [MountEntry]) -> Vec<&'a Mou
         .collect()
 }
 
-/// 返回挂载点位于 target 之下的所有记录。
+/// Return all records whose mount point lies below target.
 pub fn child_mounts<'a>(target: &str, mounts: &'a [MountEntry]) -> Vec<&'a MountEntry> {
     let base = normalize_path(target);
     let prefix = if base.ends_with('/') {

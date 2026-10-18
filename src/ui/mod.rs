@@ -1,4 +1,4 @@
-//! 表现层：命令行、交互式界面、终端格式化与日志。
+//! Presentation layer: command line, interactive UI, terminal formatting, and logging.
 
 pub mod cli;
 pub mod i18n;

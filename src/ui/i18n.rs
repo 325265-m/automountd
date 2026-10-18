@@ -1,7 +1,7 @@
-//! 极简运行时语言选择（中文 / English）。
+//! Minimal runtime language selection (Chinese / English).
 //!
-//! 优先级：`--lang` > `AUTOMOUNTD_LANG` > `LC_ALL` > `LANG` > 中文。
-//! 只影响面向用户的文案，不改变日志字段、协议或配置文件格式。
+//! Precedence: `--lang` > `AUTOMOUNTD_LANG` > `LC_ALL` > `LANG` > English.
+//! Only affects user-facing text; log fields, protocol, and config file format are unchanged.
 
 use std::sync::atomic::{AtomicU8, Ordering};
 
@@ -11,7 +11,8 @@ pub enum Lang {
     En,
 }
 
-static CURRENT: AtomicU8 = AtomicU8::new(Lang::Zh as u8);
+// English is the default; Chinese is opt-in via --lang zh or LANG=zh_CN.
+static CURRENT: AtomicU8 = AtomicU8::new(1);
 
 impl Lang {
     fn as_u8(self) -> u8 {
@@ -22,7 +23,7 @@ impl Lang {
     }
 }
 
-/// 初始化语言。`explicit` 来自 `--lang`；传 `"auto"` 或 `None` 时使用环境变量。
+/// Initializes the language. `explicit` comes from `--lang`; `"auto"` or `None` uses the environment.
 pub fn init(explicit: Option<&str>) {
     let value = match explicit.map(str::trim) {
         Some(value) if !value.is_empty() && !value.eq_ignore_ascii_case("auto") => {
@@ -31,12 +32,17 @@ pub fn init(explicit: Option<&str>) {
         _ => std::env::var("AUTOMOUNTD_LANG")
             .or_else(|_| std::env::var("LC_ALL"))
             .or_else(|_| std::env::var("LANG"))
-            .unwrap_or_default(),
+            .unwrap_or_else(|_| "en".to_string()),
+    };
+    let value = if value.trim().is_empty() {
+        "en".to_string()
+    } else {
+        value
     };
     set(&value);
 }
 
-/// 直接设置语言标签（`en`、`en_US.UTF-8`、`zh_CN` 等）。
+/// Sets the language tag directly (`en`, `en_US.UTF-8`, `zh_CN`, and so on).
 pub fn set(tag: &str) {
     let lang = if is_english_tag(tag) {
         Lang::En
@@ -58,7 +64,7 @@ pub fn is_en() -> bool {
     current() == Lang::En
 }
 
-/// 根据当前语言从两条静态文案中选择一条。
+/// Picks one of two static strings according to the current language.
 pub fn tr(zh: &'static str, en: &'static str) -> &'static str {
     if is_en() {
         en
@@ -69,7 +75,10 @@ pub fn tr(zh: &'static str, en: &'static str) -> &'static str {
 
 pub fn is_english_tag(tag: &str) -> bool {
     let tag = tag.trim().to_ascii_lowercase();
-    tag == "en" || tag.starts_with("en_") || tag.starts_with("en-")
+    tag == "en"
+        || tag.starts_with("en_")
+        || tag.starts_with("en-")
+        || matches!(tag.as_str(), "c" | "c.utf-8" | "c.utf8" | "posix")
 }
 
 #[cfg(test)]
@@ -81,8 +90,9 @@ mod tests {
         assert!(is_english_tag("en"));
         assert!(is_english_tag("en_US.UTF-8"));
         assert!(is_english_tag("en-GB"));
+        assert!(is_english_tag("C.UTF-8"));
         assert!(!is_english_tag("zh_CN.UTF-8"));
-        assert!(!is_english_tag("C.UTF-8"));
+        assert!(!is_english_tag("fr_FR.UTF-8"));
         assert!(!is_english_tag(""));
     }
 
