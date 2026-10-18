@@ -181,7 +181,7 @@ impl MockRunner {
     }
 
     /// 追加一次返回值。
-    pub fn respond(mut self, program: &str, output: CommandOutput) -> Self {
+    pub fn respond(self, program: &str, output: CommandOutput) -> Self {
         self.push(program, output);
         self
     }

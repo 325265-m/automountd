@@ -2,7 +2,9 @@
 //!
 //! 格式（Linux 内核文档 proc(5)）::
 //!
+//! ```text
 //!     36 35 98:0 /mnt1 /mnt2 rw,noatime master:1 - ext3 /dev/root rw,errors=continue
+//! ```
 //!
 //! 路径中的空格等字符以 `\040` 形式转义。
 

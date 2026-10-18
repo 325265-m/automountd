@@ -10,6 +10,9 @@
 //! 模块分层：纯逻辑（config/naming/policy/mountinfo 解析）不触碰系统状态，
 //! 系统操作集中在 `mounter`、`state`、`platform`，便于测试。
 
+// 测试里大量使用 `let mut config = Config::default(); config.x = ...` 的写法。
+#![allow(clippy::field_reassign_with_default)]
+
 pub mod cli;
 pub mod config;
 pub mod ctl;

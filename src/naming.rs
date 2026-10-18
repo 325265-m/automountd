@@ -19,16 +19,9 @@ pub fn sanitize_label(label: Option<&str>, fallback: &str) -> String {
         if ch.is_alphanumeric() || ch == '.' || ch == '-' {
             cleaned.push(ch);
             last_underscore = false;
-        } else if ch.is_whitespace() || ch == '_' {
-            if !last_underscore {
-                cleaned.push('_');
-                last_underscore = true;
-            }
-        } else if !ch.is_control() {
-            if !last_underscore {
-                cleaned.push('_');
-                last_underscore = true;
-            }
+        } else if !ch.is_control() && !last_underscore {
+            cleaned.push('_');
+            last_underscore = true;
         }
     }
     let trimmed: String = cleaned.trim_matches(|c| c == '.' || c == '-' || c == '_').to_string();

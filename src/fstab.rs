@@ -1,8 +1,22 @@
 //! `/etc/fstab` 持久化。
+//!
+//! 只实现本项目需要的部分：解析、查找、追加、删除，以及安全的写入
+//! （先备份 `.automountd.bak`，再写临时文件并 `rename` 原子替换）。
+//!
+//! 格式（fstab(5)）：
+//!
+//! ```text
+//! UUID=1234-ABCD /media/alice/备份盘 exfat defaults,nofail 0 0
+//! ```
+//!
+//! 字段中的空格以 `\040` 表示，制表符以 `\011` 表示。
 
-use std::path::Path;
+use std::fs;
+use std::io::Write;
+use std::path::{Path, PathBuf};
 
-use crate::error::Result;
+use crate::error::{Error, ErrorKind, Result};
+use crate::mountinfo;
 
 /// 推荐给移动磁盘的 systemd 友好选项：设备缺席时不影响开机。
 pub const BASE_FSTAB_OPTIONS: &[&str] = &["nofail", "x-systemd.device-timeout=10"];
@@ -21,26 +35,115 @@ pub struct FstabEntry {
 
 impl FstabEntry {
     pub fn to_line(&self) -> String {
-        todo!()
+        let options = if self.options.is_empty() {
+            "defaults".to_string()
+        } else {
+            self.options.join(",")
+        };
+        let dump = if self.dump.trim().is_empty() {
+            "0".to_string()
+        } else {
+            self.dump.trim().to_string()
+        };
+        let passno = if self.passno.trim().is_empty() {
+            "0".to_string()
+        } else {
+            self.passno.trim().to_string()
+        };
+        format!(
+            "{}\t{}\t{}\t{}\t{}\t{}",
+            escape_field(&self.source),
+            escape_field(&self.target),
+            self.fstype.trim(),
+            options,
+            dump,
+            passno
+        )
     }
 }
 
 /// fstab 中用 `\040` 表示空格。
 pub fn escape_field(text: &str) -> String {
-    todo!()
+    let mut out = String::with_capacity(text.len());
+    for ch in text.chars() {
+        match ch {
+            '\\' => out.push_str("\\\\"),
+            ' ' => out.push_str("\\040"),
+            '\t' => out.push_str("\\011"),
+            other => out.push(other),
+        }
+    }
+    out
 }
 
 /// 按空白拆分 fstab 行，尊重反斜杠转义，遇到 `#` 注释截止。
+///
+/// 转义序列原样保留（例如 `\040` 不会被拆成两个字段），
+/// 需要还原时用 [`crate::mountinfo::unescape`]。
 pub fn split_fields(line: &str) -> Vec<String> {
-    todo!()
+    let mut fields = Vec::new();
+    let mut current = String::new();
+    let mut chars = line.chars();
+    while let Some(ch) = chars.next() {
+        match ch {
+            '\\' => {
+                current.push('\\');
+                match chars.next() {
+                    Some(next) => current.push(next),
+                    None => break,
+                }
+            }
+            '#' => break,
+            other if other.is_whitespace() => {
+                if !current.is_empty() {
+                    fields.push(std::mem::take(&mut current));
+                }
+            }
+            other => current.push(other),
+        }
+    }
+    if !current.is_empty() {
+        fields.push(current);
+    }
+    fields
 }
 
 pub fn parse_fstab(text: &str) -> Vec<FstabEntry> {
-    todo!()
+    let mut entries = Vec::new();
+    for (index, raw) in text.lines().enumerate() {
+        let fields = split_fields(raw);
+        if fields.len() < 4 {
+            continue;
+        }
+        let options = fields[3]
+            .split(',')
+            .map(str::trim)
+            .filter(|option| !option.is_empty())
+            .map(str::to_string)
+            .collect::<Vec<String>>();
+        entries.push(FstabEntry {
+            source: fields[0].clone(),
+            target: mountinfo::unescape(&fields[1]),
+            fstype: fields[2].clone(),
+            options,
+            dump: fields.get(4).cloned().unwrap_or_else(|| "0".to_string()),
+            passno: fields.get(5).cloned().unwrap_or_else(|| "0".to_string()),
+            line_no: index + 1,
+            raw: raw.to_string(),
+        });
+    }
+    entries
 }
 
 pub fn load_fstab(path: &Path) -> Result<Vec<FstabEntry>> {
-    todo!()
+    match fs::read_to_string(path) {
+        Ok(text) => Ok(parse_fstab(&text)),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
+        Err(err) => Err(Error::new(
+            ErrorKind::Io,
+            format!("无法读取 {}: {err}", path.display()),
+        )),
+    }
 }
 
 pub fn find_entry<'a>(
@@ -48,12 +151,57 @@ pub fn find_entry<'a>(
     source: Option<&str>,
     target: Option<&str>,
 ) -> Option<&'a FstabEntry> {
-    todo!()
+    if source.is_none() && target.is_none() {
+        return None;
+    }
+    entries.iter().find(|entry| entry_matches(entry, source, target))
 }
 
 /// 添加一条记录，返回 (是否修改, 说明)。
 pub fn add_entry(path: &Path, entry: &FstabEntry) -> Result<(bool, String)> {
-    todo!()
+    let text = read_or_empty(path)?;
+    let entries = parse_fstab(&text);
+
+    if let Some(existing) = find_entry(&entries, Some(&entry.source), None) {
+        return Ok((
+            false,
+            format!(
+                "fstab 中已存在 {} 的记录（挂载点 {}），无需重复添加",
+                entry.source, existing.target
+            ),
+        ));
+    }
+    if let Some(existing) = find_entry(&entries, None, Some(&entry.target)) {
+        return Err(Error::config(format!(
+            "挂载点 {} 已被 fstab 中的 {} 占用",
+            existing.target, existing.source
+        ))
+        .with_hint("请先删除冲突条目，或改用其他挂载点"));
+    }
+
+    let mut merged = entry.clone();
+    merged.options = merge_options(&entry.options);
+
+    let mut output = text;
+    if !output.is_empty() && !output.ends_with('\n') {
+        output.push('\n');
+    }
+    output.push_str(&merged.to_line());
+    output.push('\n');
+
+    backup_file(path)?;
+    write_atomic(path, &output)?;
+
+    Ok((
+        true,
+        format!(
+            "已写入 {}: {} -> {}（选项 {}）",
+            path.display(),
+            merged.source,
+            merged.target,
+            merged.options.join(",")
+        ),
+    ))
 }
 
 /// 删除匹配记录（source 或 target 任一匹配）。
@@ -62,5 +210,363 @@ pub fn remove_entry(
     source: Option<&str>,
     target: Option<&str>,
 ) -> Result<(bool, String)> {
-    todo!()
+    if source.is_none() && target.is_none() {
+        return Ok((false, "未指定要删除的设备或挂载点".to_string()));
+    }
+    let text = read_or_empty(path)?;
+    let entries = parse_fstab(&text);
+    let matched: Vec<&FstabEntry> = entries
+        .iter()
+        .filter(|entry| entry_matches(entry, source, target))
+        .collect();
+    if matched.is_empty() {
+        let wanted = match (source, target) {
+            (Some(source), Some(target)) => format!("{source} / {target}"),
+            (Some(source), None) => source.to_string(),
+            (None, Some(target)) => target.to_string(),
+            (None, None) => String::new(),
+        };
+        return Ok((false, format!("fstab 中没有匹配 {wanted} 的记录")));
+    }
+
+    let removed_lines: Vec<usize> = matched.iter().map(|entry| entry.line_no).collect();
+    let mut output = String::new();
+    for (index, line) in text.lines().enumerate() {
+        if removed_lines.contains(&(index + 1)) {
+            continue;
+        }
+        output.push_str(line);
+        output.push('\n');
+    }
+
+    backup_file(path)?;
+    write_atomic(path, &output)?;
+    Ok((
+        true,
+        format!(
+            "已从 fstab 删除 {} 条记录（{}）",
+            removed_lines.len(),
+            matched
+                .iter()
+                .map(|entry| entry.target.as_str())
+                .collect::<Vec<&str>>()
+                .join(", ")
+        ),
+    ))
+}
+
+/// 比较 source / target；None 表示不限制该维度。
+fn entry_matches(entry: &FstabEntry, source: Option<&str>, target: Option<&str>) -> bool {
+    let source_ok = source
+        .map(|wanted| normalize_source(&entry.source) == normalize_source(wanted))
+        .unwrap_or(true);
+    let target_ok = target
+        .map(|wanted| same_path(&entry.target, wanted))
+        .unwrap_or(true);
+    source_ok && target_ok
+}
+
+/// `UUID=` / `PARTUUID=` / `LABEL=` 前缀大小写不敏感；UUID 值也做大小写归一。
+fn normalize_source(source: &str) -> String {
+    let trimmed = source.trim();
+    for prefix in ["UUID=", "PARTUUID=", "LABEL="] {
+        if trimmed.len() >= prefix.len() && trimmed[..prefix.len()].eq_ignore_ascii_case(prefix) {
+            let value = trimmed[prefix.len()..].trim();
+            let value = if prefix.eq_ignore_ascii_case("LABEL=") {
+                value.to_string()
+            } else {
+                value.to_ascii_uppercase()
+            };
+            return format!("{}{}", prefix.to_ascii_uppercase(), value);
+        }
+    }
+    trimmed.to_string()
+}
+
+fn same_path(left: &str, right: &str) -> bool {
+    let left = mountinfo::normalize_path(left);
+    let right = mountinfo::normalize_path(right);
+    left == right || left.trim_end_matches('/') == right.trim_end_matches('/')
+}
+
+/// 合并选项：原有在前，`BASE_FSTAB_OPTIONS` 补在后面，按 `=` 前的键去重。
+fn merge_options(existing: &[String]) -> Vec<String> {
+    let mut merged: Vec<String> = Vec::new();
+    let candidates = existing
+        .iter()
+        .map(String::as_str)
+        .chain(BASE_FSTAB_OPTIONS.iter().copied());
+    for option in candidates {
+        let option = option.trim();
+        if option.is_empty() {
+            continue;
+        }
+        let key = option_key(option);
+        match merged.iter().position(|item| option_key(item) == key) {
+            Some(index) => merged[index] = option.to_string(),
+            None => merged.push(option.to_string()),
+        }
+    }
+    merged
+}
+
+fn option_key(option: &str) -> &str {
+    option.split('=').next().unwrap_or(option).trim()
+}
+
+fn read_or_empty(path: &Path) -> Result<String> {
+    match fs::read_to_string(path) {
+        Ok(text) => Ok(text),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(String::new()),
+        Err(err) => Err(Error::new(
+            ErrorKind::Io,
+            format!("无法读取 {}: {err}", path.display()),
+        )),
+    }
+}
+
+fn file_name_of(path: &Path) -> String {
+    path.file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "fstab".to_string())
+}
+
+fn parent_of(path: &Path) -> PathBuf {
+    match path.parent() {
+        Some(parent) if !parent.as_os_str().is_empty() => parent.to_path_buf(),
+        _ => PathBuf::from("."),
+    }
+}
+
+/// 写入前备份为 `<文件名>.automountd.bak`；文件不存在时不需要备份。
+fn backup_file(path: &Path) -> Result<()> {
+    if !path.exists() {
+        return Ok(());
+    }
+    let backup = path.with_file_name(format!("{}.automountd.bak", file_name_of(path)));
+    fs::copy(path, &backup).map_err(|err| {
+        Error::new(
+            ErrorKind::Io,
+            format!("备份 {} 到 {} 失败: {err}", path.display(), backup.display()),
+        )
+    })?;
+    Ok(())
+}
+
+/// 临时文件 + `rename` 原子替换，尽量保留原文件权限。
+fn write_atomic(path: &Path, text: &str) -> Result<()> {
+    let parent = parent_of(path);
+    fs::create_dir_all(&parent).map_err(|err| {
+        Error::new(
+            ErrorKind::Io,
+            format!("无法创建目录 {}: {err}", parent.display()),
+        )
+    })?;
+    let tmp = parent.join(format!(
+        ".{}.automountd.{}.tmp",
+        file_name_of(path),
+        std::process::id()
+    ));
+    {
+        let mut file = fs::File::create(&tmp).map_err(|err| {
+            Error::new(
+                ErrorKind::Io,
+                format!("无法写入临时文件 {}: {err}", tmp.display()),
+            )
+        })?;
+        if let Err(err) = file.write_all(text.as_bytes()) {
+            let _ = fs::remove_file(&tmp);
+            return Err(Error::new(
+                ErrorKind::Io,
+                format!("写入 {} 失败: {err}", tmp.display()),
+            ));
+        }
+        file.flush().ok();
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = fs::metadata(path)
+            .map(|meta| meta.permissions().mode() & 0o7777)
+            .unwrap_or(0o644);
+        let _ = fs::set_permissions(&tmp, fs::Permissions::from_mode(mode));
+    }
+    fs::rename(&tmp, path).map_err(|err| {
+        let _ = fs::remove_file(&tmp);
+        Error::new(
+            ErrorKind::Io,
+            format!("替换 {} 失败: {err}", path.display()),
+        )
+    })?;
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::testutil::TempDir;
+
+    fn sample_entry(source: &str, target: &str, options: &[&str]) -> FstabEntry {
+        FstabEntry {
+            source: source.to_string(),
+            target: target.to_string(),
+            fstype: "exfat".to_string(),
+            options: options.iter().map(|item| (*item).to_string()).collect(),
+            dump: "0".to_string(),
+            passno: "0".to_string(),
+            line_no: 0,
+            raw: String::new(),
+        }
+    }
+
+    #[test]
+    fn splits_fields_and_keeps_escapes() {
+        let fields = split_fields("UUID=1234-ABCD /media/My\\040Disk exfat defaults 0 0 # 注释");
+        assert_eq!(
+            fields,
+            vec![
+                "UUID=1234-ABCD",
+                "/media/My\\040Disk",
+                "exfat",
+                "defaults",
+                "0",
+                "0"
+            ]
+        );
+        assert_eq!(mountinfo::unescape(&fields[1]), "/media/My Disk");
+        assert!(split_fields("   # 整行注释").is_empty());
+        assert_eq!(split_fields("a\\tb c"), vec!["a\\tb", "c"]);
+    }
+
+    #[test]
+    fn parses_entries_with_spaces_and_comments() {
+        let text = concat!(
+            "# /etc/fstab\n",
+            "UUID=1111-2222 /media/My\\040Disk exfat defaults,nofail 0 2\n",
+            "\n",
+            "不完整的一行\n",
+            "# LABEL=old /mnt/old ext4 defaults 0 0\n",
+        );
+        let entries = parse_fstab(text);
+        assert_eq!(entries.len(), 1);
+        let entry = &entries[0];
+        assert_eq!(entry.source, "UUID=1111-2222");
+        assert_eq!(entry.target, "/media/My Disk");
+        assert_eq!(entry.fstype, "exfat");
+        assert_eq!(entry.options, vec!["defaults", "nofail"]);
+        assert_eq!(entry.dump, "0");
+        assert_eq!(entry.passno, "2");
+        assert_eq!(entry.line_no, 2);
+        assert!(entry.raw.starts_with("UUID=1111-2222"));
+    }
+
+    #[test]
+    fn escapes_and_roundtrips_line() {
+        assert_eq!(escape_field("/media/My Disk"), "/media/My\\040Disk");
+        assert_eq!(escape_field("a\tb"), "a\\011b");
+        assert_eq!(escape_field("a\\b"), "a\\\\b");
+
+        let entry = sample_entry("UUID=ABCD-1234", "/media/备份 盘", &["defaults", "nofail"]);
+        let line = entry.to_line();
+        let parsed = parse_fstab(&line);
+        assert_eq!(parsed.len(), 1);
+        assert_eq!(parsed[0].target, "/media/备份 盘");
+        assert_eq!(parsed[0].source, entry.source);
+        assert_eq!(parsed[0].options, entry.options);
+    }
+
+    #[test]
+    fn finds_entry_ignoring_prefix_case_and_trailing_slash() {
+        let text = "uuid=abcd-1234 /media/My\\040Disk exfat defaults 0 0\n";
+        let entries = parse_fstab(text);
+        assert!(find_entry(&entries, Some("UUID=abcd-1234"), None).is_some());
+        assert!(find_entry(&entries, None, Some("/media/My Disk/")).is_some());
+        assert!(find_entry(&entries, Some("LABEL=nope"), None).is_none());
+        assert!(find_entry(&entries, None, None).is_none());
+    }
+
+    #[test]
+    fn adds_entry_idempotently_with_backup() {
+        let dir = TempDir::new("fstab-add");
+        let path = dir.join("fstab");
+        std::fs::write(&path, "# 现有 fstab\nUUID=AAAA / ext4 defaults 0 1").unwrap();
+
+        let entry = sample_entry("UUID=1234-ABCD", "/media/My Disk", &["uid=1000"]);
+        let (changed, message) = add_entry(&path, &entry).unwrap();
+        assert!(changed, "{message}");
+        assert!(message.contains("已写入"));
+
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.ends_with('\n'), "补换行失败: {text:?}");
+        assert!(text.contains("UUID=AAAA / ext4 defaults 0 1\n"));
+        let entries = parse_fstab(&text);
+        assert_eq!(entries.len(), 2);
+        let added = &entries[1];
+        assert!(added.options.contains(&"nofail".to_string()));
+        assert!(added.options.contains(&"x-systemd.device-timeout=10".to_string()));
+        assert_eq!(added.options[0], "uid=1000");
+
+        let backup = dir.join("fstab.automountd.bak");
+        assert!(backup.is_file(), "未生成备份文件");
+        assert!(std::fs::read_to_string(&backup).unwrap().contains("UUID=AAAA"));
+
+        // 第二次添加应幂等
+        let (changed, message) = add_entry(&path, &entry).unwrap();
+        assert!(!changed);
+        assert!(message.contains("已存在"));
+        assert_eq!(parse_fstab(&std::fs::read_to_string(&path).unwrap()).len(), 2);
+    }
+
+    #[test]
+    fn rejects_conflicting_target() {
+        let dir = TempDir::new("fstab-conflict");
+        let path = dir.write("fstab", "UUID=AAAA /media/same exfat defaults 0 0\n");
+        let entry = sample_entry("UUID=BBBB", "/media/same", &[]);
+        let err = add_entry(&path, &entry).unwrap_err();
+        assert_eq!(err.kind, ErrorKind::Config);
+        assert!(err.message.contains("已被 fstab 中的"), "{}", err.message);
+    }
+
+    #[test]
+    fn removes_entry_by_source_or_target() {
+        let dir = TempDir::new("fstab-remove");
+        let path = dir.write(
+            "fstab",
+            concat!(
+                "# 头部注释\n",
+                "UUID=AAAA / ext4 defaults 0 1\n",
+                "UUID=1234-ABCD /media/My\\040Disk exfat defaults 0 0\n",
+                "UUID=BBBB /media/other exfat defaults 0 0\n",
+            ),
+        );
+        let (removed, message) = remove_entry(&path, Some("uuid=1234-abcd"), None).unwrap();
+        assert!(removed, "{message}");
+        let entries = parse_fstab(&std::fs::read_to_string(&path).unwrap());
+        assert_eq!(entries.len(), 2);
+        assert!(find_entry(&entries, Some("UUID=1234-ABCD"), None).is_none());
+        assert!(dir.join("fstab.automountd.bak").is_file());
+
+        let (removed, _) = remove_entry(&path, None, Some("/media/other/")).unwrap();
+        assert!(removed);
+        assert_eq!(
+            parse_fstab(&std::fs::read_to_string(&path).unwrap()).len(),
+            1
+        );
+
+        let (removed, message) = remove_entry(&path, Some("UUID=FFFF"), None).unwrap();
+        assert!(!removed);
+        assert!(message.contains("没有匹配"));
+    }
+
+    #[test]
+    fn missing_file_is_treated_as_empty() {
+        let dir = TempDir::new("fstab-missing");
+        let path = dir.join("fstab");
+        assert!(load_fstab(&path).unwrap().is_empty());
+        let entry = sample_entry("UUID=1234-ABCD", "/media/data", &[]);
+        let (changed, _) = add_entry(&path, &entry).unwrap();
+        assert!(changed);
+        assert!(!dir.join("fstab.automountd.bak").exists());
+        assert_eq!(load_fstab(&path).unwrap().len(), 1);
+    }
 }
