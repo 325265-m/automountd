@@ -62,10 +62,10 @@ fi
 
 command -v cargo >/dev/null 2>&1 || die "未找到 cargo，请先安装 Rust 工具链：https://rustup.rs"
 
-info "构建 release 版本（零第三方依赖，可离线）"
+info "构建 release 版本"
 (
     cd "${ROOT_DIR}"
-    cargo build --release --offline
+    cargo build --release
 )
 BIN="${ROOT_DIR}/target/release/automountd"
 [ -x "$BIN" ] || die "构建产物不存在: $BIN"

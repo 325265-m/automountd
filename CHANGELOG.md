@@ -14,7 +14,9 @@
 
 ### Changed
 
-- 暂无
+- 移除“零第三方依赖”的硬性约束，改为受控的依赖审查策略；当前 `[dependencies]` 仍为空。
+- CI、Makefile、安装脚本与文档不再强制 `--offline`，以便未来引入经审查的 crate。
+- CLI `--version` 的“零第三方依赖”文案改为“当前无第三方运行时依赖”。
 
 ### Fixed
 

@@ -12,8 +12,13 @@
 
 ## 不可协商的约束
 
-1. **零第三方依赖**：`Cargo.toml` 的 `[dependencies]` 必须保持为空。不要添加 crate；
-   如确有必要，先停止实现并在 PR/issue 中说明理由，等待维护者决定。
+1. **依赖受控（不再禁止第三方 crate）**：当前 `[dependencies]` 为空是设计选择，不是禁令。
+   新增依赖必须：
+   - 优先标准库或现有实现；能用少量安全代码解决的不引入大依赖；
+   - 在 PR 中说明用途、替代方案、维护状态、许可证（必须与 GPL-3.0-or-later 兼容）；
+   - 同步更新 `Cargo.lock`，确保 CI 可构建；
+   - 运行时依赖（尤其涉及 root 守护进程、挂载、路径处理）需要额外安全审查；
+   - 禁止来源不明、无人维护或与现有能力重复的 crate。
 2. **MSRV 1.74 / edition 2021**：不要使用更高版本才稳定的标准库 API 或语言特性。
 3. **分层**：
    - `src/core/`：纯逻辑（配置、模型、策略、解析）。不要新增系统调用；现有 `mountinfo` 读取 `/proc` 是既定例外。
@@ -39,15 +44,15 @@
 
 ```bash
 # 全量测试（单元 + CLI 集成）
-cargo test --all-targets --offline
+cargo test --all-targets
 
 # 格式与静态检查
 cargo fmt --all
 cargo fmt --all -- --check
-cargo clippy --all-targets --offline
+cargo clippy --all-targets
 
 # 构建
-cargo build --release --offline
+cargo build --release
 
 # Linux 专属代码的交叉类型检查（需安装 target）
 cargo check --all-targets --target x86_64-unknown-linux-gnu
@@ -94,21 +99,21 @@ src/ui/logging.rs       日志
 
 ```bash
 cargo fmt --all -- --check
-cargo clippy --all-targets --offline
-cargo test --all-targets --offline
-cargo build --release --offline
+cargo clippy --all-targets
+cargo test --all-targets
+cargo build --release
 ```
 
 ## 完成定义（Definition of Done）
 
-- [ ] 代码在 `cargo test --all-targets --offline` 下全绿
+- [ ] 代码在 `cargo test --all-targets` 下全绿
 - [ ] `cargo clippy --all-targets` 无新增警告
 - [ ] `cargo fmt --all -- --check` 通过
 - [ ] Linux target `cargo check` 通过（涉及 `cfg(unix)` 时）
 - [ ] 新增/更新测试，包含失败路径
 - [ ] 安全相关改动有回归测试与风险说明
 - [ ] 更新 `CHANGELOG.md`，必要时更新 `README.md`
-- [ ] 未引入第三方依赖
+- [ ] 新增依赖已说明理由、许可证与安全影响（当前无运行时依赖）
 - [ ] 未泄露真实 UUID、密钥、个人路径
 
 ## 禁止事项

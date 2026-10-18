@@ -10,16 +10,16 @@ CONFDIR := $(DESTDIR)/etc/automountd
 all: build
 
 build:
-	$(CARGO) build --release --offline
+	$(CARGO) build --release
 
 test:
-	$(CARGO) test --offline
+	$(CARGO) test --all-targets
 
 check:
-	$(CARGO) check --all-targets --offline
+	$(CARGO) check --all-targets
 
 lint:
-	$(CARGO) clippy --all-targets --offline
+	$(CARGO) clippy --all-targets
 
 install: build
 	install -Dm755 target/release/automountd $(BINDIR)/automountd

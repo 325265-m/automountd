@@ -1235,7 +1235,7 @@ fn print_version() {
         std::env::consts::OS,
         std::env::consts::ARCH
     );
-    println!("构建配置: 零第三方依赖（std only）");
+    println!("依赖配置: 当前无第三方运行时依赖");
 }
 
 fn print_help() {

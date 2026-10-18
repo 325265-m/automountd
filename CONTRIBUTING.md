@@ -16,12 +16,21 @@
 ```bash
 git clone <repo>
 cd automountd
-cargo test --all-targets --offline
-cargo build --release --offline
+cargo test --all-targets
+cargo build --release
 ```
 
-项目**没有任何第三方 crate 依赖**，请保持这一点：新增依赖需要在 PR 中说明必要性，并同步更新
-`Cargo.lock` 与 CI；涉及 root 守护进程的依赖会额外审查供应链风险。
+## 依赖策略
+
+本项目不再禁止第三方 crate，但依赖必须受控：
+
+- 优先使用标准库或现有实现；能用少量安全代码解决的不引入大依赖。
+- 新增运行时依赖需在 PR 中说明：用途、替代方案、维护状态、许可证（必须与 GPL-3.0-or-later 兼容）。
+- 禁止来源不明、无人维护或与现有能力重复的 crate。
+- 同步更新 `Cargo.lock`，确保 CI 可以正常构建（CI 不再强制 `--offline`）。
+- 涉及 root 守护进程、挂载、路径处理的依赖需要额外安全审查与回归测试。
+
+当前 `[dependencies]` 为空是设计选择，不是限制。
 
 ## 代码结构
 
@@ -41,7 +50,7 @@ src/ui/       表现层（cli、tui、term、logging）
 - 系统操作必须通过 `system::exec::CommandRunner`，便于用 `MockRunner` 测试。
 - 涉及路径、权限、挂载的改动必须补充安全测试（路径逃逸、符号链接、系统盘保护、非 root 授权）。
 - 不要提交密钥、真实设备 UUID、个人路径或 `/etc` 内容。
-- 提交前在 Linux 上至少运行一次 `cargo test --all-targets --offline`；仅改纯逻辑时也要跑全量测试。
+- 提交前在 Linux 上至少运行一次 `cargo test --all-targets`；仅改纯逻辑时也要跑全量测试。
 
 ## 提交信息
 
@@ -59,7 +68,7 @@ test: 增加非 root 卸载授权用例
 ## Pull Request 流程
 
 1. Fork 仓库并从 `main` 创建分支：`feat/...`、`fix/...`、`docs/...`。
-2. 编写或更新测试，确保 `cargo test --offline` 全绿。
+2. 编写或更新测试，确保 `cargo test --all-targets` 全绿。
 3. 更新 `README.md` / `CHANGELOG.md`（行为变更必须写 `[Unreleased]`）。
 4. 填写 PR 模板，说明动机、实现方式、测试环境与风险。
 5. CI 通过后由维护者 review；必要时会要求补充 Linux 实机验证结果。

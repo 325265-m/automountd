@@ -1,6 +1,6 @@
 //! 块设备发现：优先 `lsblk -J`，否则回退 sysfs + blkid。
 //!
-//! `lsblk -J` 输出 JSON，但工程不允许第三方依赖，因此本模块自带一个
+//! `lsblk -J` 输出 JSON；当前未引入 JSON 依赖，因此本模块自带一个
 //! 只覆盖 lsblk 输出所需语法的极简 JSON 解析器：object / array / string /
 //! number / true / false / null；字符串支持 `\" \\ \/ \b \f \n \r \t` 与
 //! `\uXXXX`（含 UTF-16 代理对）。

@@ -7,8 +7,9 @@
 用 Rust 编写的 Linux 块设备自动挂载服务：插入 U 盘/移动硬盘自动挂载到 `/media/<用户>/<卷标>`，
 拔出自动卸载；支持开机挂载、`/etc/fstab` 持久化、命令行与交互式界面。
 
-**零第三方依赖**：只使用 Rust 标准库和直接声明的 libc FFI。构建产物是单个静态链接友好的二进制，
-不需要 Python、不需要 crates.io、可在离线环境构建，也避免了 root 守护进程的供应链风险。
+**当前无第三方运行时依赖**：只使用 Rust 标准库和直接声明的 libc FFI，构建产物是单个二进制。
+第三方 crate 并未被禁止；新增运行时依赖需按 [依赖策略](CONTRIBUTING.md#依赖策略) 审查。
+当前 `[dependencies]` 为空是设计选择，不是限制。
 
 ```
      udev / 轮询                  控制 socket
@@ -58,13 +59,13 @@ git clone <repo> automountd && cd automountd
 sudo ./packaging/install.sh
 ```
 
-脚本会 `cargo build --release --offline`、安装到 `/usr/local/bin/automountd`、
+脚本会 `cargo build --release`、安装到 `/usr/local/bin/automountd`、
 生成 `/etc/automountd/config.conf`、安装并启动 `automountd.service`。
 
 手动安装：
 
 ```bash
-cargo build --release --offline
+cargo build --release
 sudo install -Dm755 target/release/automountd /usr/local/bin/automountd
 sudo install -Dm644 packaging/automountd.service /etc/systemd/system/automountd.service
 sudo automountd config init
@@ -211,10 +212,10 @@ sudo automountd fstab remove --target /media/alice/U盘
 ## 开发与测试
 
 ```bash
-cargo test --all-targets --offline   # 114 个单元测试 + 4 个 CLI 集成测试
-cargo check --all-targets            # 类型检查
-cargo clippy --all-targets           # 静态检查
-cargo build --release --offline
+cargo test --all-targets   # 114 个单元测试 + 4 个 CLI 集成测试
+cargo check --all-targets  # 类型检查
+cargo clippy --all-targets # 静态检查
+cargo build --release
 ```
 
 Linux 专属代码（Unix socket、`SO_PEERCRED`、`geteuid`/`chown`、udev 子进程）通过

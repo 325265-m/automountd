@@ -38,7 +38,8 @@ automountd 以 root 运行并处理块设备与挂载点，安全问题是首要
 - 控制 socket 的越权（`SO_PEERCRED`、`ctl_allowed_users`、`--force`、卸载他人挂载）；
 - 通过卷标/UUID/fstab 字段注入额外挂载项；
 - 以普通用户身份让守护进程挂载系统盘或执行任意 mount 选项；
-- 敏感信息写入日志或状态文件。
+- 敏感信息写入日志或状态文件；
+- 第三方依赖的供应链风险（新增/升级依赖引入的恶意或被接管代码）。
 
 不在范围内：
 
@@ -52,4 +53,5 @@ automountd 以 root 运行并处理块设备与挂载点，安全问题是首要
 - 保持默认的 `auto_mount_internal_disks = false` 与系统盘保护，不要随意放开 `allowed_uuids`；
 - `ctl_allowed_users` 默认 `*` 表示所有本地用户（仍会校验 uid）；多用户机器建议收紧为具体用户名或 uid；
 - 使用发行版提供的 systemd 加固参数，并定期查看 `journalctl -u automountd`；
-- 在执行 `fstab` 持久化前确认挂载点位于 `mount_root` 下。
+- 在执行 `fstab` 持久化前确认挂载点位于 `mount_root` 下；
+- 新增依赖前检查维护状态、许可证与已知漏洞，并锁定 `Cargo.lock`。

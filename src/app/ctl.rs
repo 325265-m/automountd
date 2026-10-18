@@ -1,4 +1,4 @@
-//! 控制接口：Unix socket + 行协议（JSON 无关，零依赖）。
+//! 控制接口：Unix socket + 行协议（不使用 serde）。
 //!
 //! 请求：`1<TAB>命令<TAB>参数...`；响应：`OK` 后跟 `M<TAB>键<TAB>值` 元信息行
 //! 与 `R<TAB>字段...` 数据行，或 `ERR<TAB>代码<TAB>消息`。
