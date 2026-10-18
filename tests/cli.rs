@@ -14,13 +14,17 @@ fn version_reports_package_version() {
     let output = Command::new(binary())
         .arg("--version")
         .output()
-        .expect("运行 --version 失败");
-    assert!(output.status.success(), "退出码 {:?}", output.status.code());
+        .expect("failed to run --version");
+    assert!(
+        output.status.success(),
+        "unexpected exit code: {:?}",
+        output.status.code()
+    );
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("automountd"), "输出: {stdout}");
+    assert!(stdout.contains("automountd"), "output: {stdout}");
     assert!(
         stdout.contains(env!("CARGO_PKG_VERSION")),
-        "输出应包含版本号: {stdout}"
+        "output should contain the package version: {stdout}"
     );
 }
 
@@ -29,13 +33,16 @@ fn help_lists_primary_commands() {
     let output = Command::new(binary())
         .arg("--help")
         .output()
-        .expect("运行 --help 失败");
+        .expect("failed to run --help");
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
     for command in [
         "daemon", "status", "list", "mount", "umount", "doctor", "tui",
     ] {
-        assert!(stdout.contains(command), "--help 缺少命令 {command}");
+        assert!(
+            stdout.contains(command),
+            "--help is missing command {command}"
+        );
     }
 }
 
@@ -49,13 +56,13 @@ fn config_init_and_validate_roundtrip() {
         .arg(&config)
         .args(["config", "init"])
         .output()
-        .expect("运行 config init 失败");
+        .expect("failed to run config init");
     assert!(
         init.status.success(),
-        "config init 失败: {}",
+        "config init failed: {}",
         String::from_utf8_lossy(&init.stderr)
     );
-    let text = fs::read_to_string(&config).expect("配置文件未生成");
+    let text = fs::read_to_string(&config).expect("configuration file was not created");
     assert!(text.contains("mount_root"));
     assert!(text.contains("GPL") || text.contains("mount_options"));
 
@@ -64,10 +71,10 @@ fn config_init_and_validate_roundtrip() {
         .arg(&config)
         .args(["config", "validate"])
         .output()
-        .expect("运行 config validate 失败");
+        .expect("failed to run config validate");
     assert!(
         validate.status.success(),
-        "config validate 失败: {}",
+        "config validate failed: {}",
         String::from_utf8_lossy(&validate.stderr)
     );
 }
@@ -79,14 +86,14 @@ fn list_all_succeeds_without_devices() {
     let output = Command::new(binary())
         .args(["list", "--all"])
         .output()
-        .expect("运行 list --all 失败");
+        .expect("failed to run list --all");
     assert!(
         output.status.success(),
-        "list --all 失败: {}",
+        "list --all failed: {}",
         String::from_utf8_lossy(&output.stderr)
     );
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(!stdout.contains("panicked"), "输出异常: {stdout}");
+    assert!(!stdout.contains("panicked"), "unexpected output: {stdout}");
 }
 
 #[test]
@@ -94,19 +101,25 @@ fn english_help_and_version() {
     let help = Command::new(binary())
         .args(["--lang", "en", "--help"])
         .output()
-        .expect("运行 --lang en --help 失败");
+        .expect("failed to run --lang en --help");
     assert!(help.status.success());
     let stdout = String::from_utf8_lossy(&help.stdout);
-    assert!(stdout.contains("Usage:"), "帮助未切换为英文: {stdout}");
+    assert!(
+        stdout.contains("Usage:"),
+        "help did not switch to English: {stdout}"
+    );
     assert!(stdout.contains("Linux disk auto-mount daemon"));
 
     let version = Command::new(binary())
         .args(["--lang", "en", "--version"])
         .output()
-        .expect("运行 --lang en --version 失败");
+        .expect("failed to run --lang en --version");
     assert!(version.status.success());
     let stdout = String::from_utf8_lossy(&version.stdout);
-    assert!(stdout.contains("Target:"), "版本输出未切换为英文: {stdout}");
+    assert!(
+        stdout.contains("Target:"),
+        "version output did not switch to English: {stdout}"
+    );
 }
 
 #[test]
@@ -114,8 +127,8 @@ fn rejects_unknown_language() {
     let output = Command::new(binary())
         .args(["--lang", "fr", "--help"])
         .output()
-        .expect("运行 --lang fr 失败");
+        .expect("failed to run --lang fr");
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("不支持的语言") || stderr.contains("Unsupported language"));
+    assert!(stderr.contains("Unsupported language"));
 }

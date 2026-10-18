@@ -110,7 +110,7 @@ fn console_user_impl(
             match lookup_user(runner, name) {
                 Some(user) => return Some(user),
                 None => logging::warn(format!(
-                    "配置中指定的用户 {name} 不存在，改为自动识别桌面用户"
+                    "configured user {name} does not exist; falling back to desktop user detection"
                 )),
             }
         }
@@ -124,7 +124,9 @@ fn console_user_impl(
         }
         if let Some(user) = lookup_user(runner, &name) {
             if user.uid != 0 {
-                logging::debug(format!("由环境变量 {key} 识别到桌面用户 {name}"));
+                logging::debug(format!(
+                    "detected desktop user {name} from environment variable {key}"
+                ));
                 return Some(user);
             }
         }
@@ -134,7 +136,9 @@ fn console_user_impl(
         if let Ok(uid) = value.trim().parse::<u32>() {
             if uid != 0 {
                 if let Some(user) = lookup_uid(runner, uid) {
-                    logging::debug(format!("由 PKEXEC_UID 识别到桌面用户 {uid}"));
+                    logging::debug(format!(
+                        "detected desktop user with uid {uid} from PKEXEC_UID"
+                    ));
                     return Some(user);
                 }
             }
@@ -231,7 +235,7 @@ pub fn parse_session_properties(text: &str) -> BTreeMap<String, String> {
 /// Use loginctl to find the user behind the graphical session (falling back to a text console).
 fn active_session_user(runner: &dyn CommandRunner) -> Option<UserInfo> {
     if !runner.which("loginctl") {
-        logging::debug("未找到 loginctl，跳过活动会话探测");
+        logging::debug("loginctl not found; skipping active session detection");
         return None;
     }
     let output = match runner.run(
@@ -242,14 +246,14 @@ fn active_session_user(runner: &dyn CommandRunner) -> Option<UserInfo> {
         Ok(output) if output.ok() => output,
         Ok(output) => {
             logging::debug(format!(
-                "loginctl list-sessions 返回 {}: {}",
+                "loginctl list-sessions returned {}: {}",
                 output.status,
                 output.stderr_trimmed()
             ));
             return None;
         }
         Err(err) => {
-            logging::debug(format!("执行 loginctl list-sessions 出错: {err}"));
+            logging::debug(format!("failed to run loginctl list-sessions: {err}"));
             return None;
         }
     };
@@ -291,7 +295,9 @@ fn active_session_user(runner: &dyn CommandRunner) -> Option<UserInfo> {
         match &best {
             Some((best_score, _)) if *best_score >= score => {}
             _ => {
-                logging::debug(format!("选中会话 {session} 的用户 {name}({uid})"));
+                logging::debug(format!(
+                    "selected user {name}({uid}) from session {session}"
+                ));
                 best = Some((score, user));
             }
         }
@@ -329,14 +335,16 @@ fn session_properties(runner: &dyn CommandRunner, session: &str) -> BTreeMap<Str
         Ok(output) if output.ok() => parse_session_properties(&output.stdout),
         Ok(output) => {
             logging::debug(format!(
-                "loginctl show-session {session} 返回 {}: {}",
+                "loginctl show-session {session} returned {}: {}",
                 output.status,
                 output.stderr_trimmed()
             ));
             BTreeMap::new()
         }
         Err(err) => {
-            logging::debug(format!("执行 loginctl show-session {session} 出错: {err}"));
+            logging::debug(format!(
+                "failed to run loginctl show-session {session}: {err}"
+            ));
             BTreeMap::new()
         }
     }
@@ -351,14 +359,14 @@ fn getent_entries(runner: &dyn CommandRunner, key: &str) -> Vec<(UserInfo, Strin
         Ok(output) if output.ok() => parse_passwd_text(&output.stdout),
         Ok(output) => {
             logging::debug(format!(
-                "getent passwd {key} 返回 {}: {}",
+                "getent passwd {key} returned {}: {}",
                 output.status,
                 output.stderr_trimmed()
             ));
             Vec::new()
         }
         Err(err) => {
-            logging::debug(format!("执行 getent passwd {key} 出错: {err}"));
+            logging::debug(format!("failed to run getent passwd {key}: {err}"));
             Vec::new()
         }
     }
@@ -457,7 +465,8 @@ notanumber x y z
                 CommandOutput::success("deskuser:x:4242:4242::/home/deskuser:/bin/bash\n"),
             );
 
-        let user = console_user_impl(&runner, None, &|_| None).expect("应识别到图形会话用户");
+        let user = console_user_impl(&runner, None, &|_| None)
+            .expect("should detect the graphical session user");
         assert_eq!(user.name, "deskuser");
         assert_eq!(user.uid, 4242);
     }
@@ -468,7 +477,8 @@ notanumber x y z
             "getent",
             CommandOutput::success("alice:x:4300:4300:Alice:/home/alice:/bin/bash\n"),
         );
-        let user = console_user_impl(&runner, Some("alice"), &|_| None).expect("应返回配置用户");
+        let user = console_user_impl(&runner, Some("alice"), &|_| None)
+            .expect("should return the configured user");
         assert_eq!(user.name, "alice");
         assert_eq!(user.uid, 4300);
         // Once the configured user matches, loginctl must not be asked again
@@ -486,7 +496,7 @@ notanumber x y z
             "PKEXEC_USER" => Some("alice".to_string()),
             _ => None,
         })
-        .expect("应跳过 root 并使用 PKEXEC_USER");
+        .expect("should skip root and use PKEXEC_USER");
         assert_eq!(user.name, "alice");
         assert_eq!(user.uid, 4301);
     }
@@ -505,7 +515,7 @@ svc:x:1002:1002::/srv:/usr/sbin/nologin
 ",
         );
         let text = std::fs::read_to_string(path).unwrap();
-        let user = pick_human_user(&text).expect("应找到普通用户");
+        let user = pick_human_user(&text).expect("should find a regular user");
         assert_eq!(user.name, "alice");
         assert_eq!(user.uid, 1000);
         // With only root and nologin users there is no "human" available

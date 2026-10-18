@@ -92,12 +92,14 @@ impl Daemon {
         platform::install_signal_handlers()?;
 
         if !self.config.dry_run {
-            platform::require_root("启动自动挂载服务")?;
+            platform::require_root("start the automount service")?;
         }
 
         self.state.prepare()?;
         if let Err(err) = self.state.load() {
-            logging::warn(format!("读取上次状态失败，将重新开始: {err}"));
+            logging::warn(format!(
+                "failed to read the previous state; starting fresh: {err}"
+            ));
         }
         self.state.pid = std::process::id();
         self.state.started_at = self.started_at;
@@ -109,7 +111,7 @@ impl Daemon {
         self.spawn_monitor()?;
 
         logging::info(format!(
-            "automountd {} 已启动（pid {}，模式 {}，挂载根目录 {}）",
+            "automountd {} started (pid {}, mode {}, mount root {})",
             crate::VERSION,
             std::process::id(),
             self.state.backend,
@@ -133,12 +135,14 @@ impl Daemon {
     fn spawn_monitor(&mut self) -> Result<()> {
         match UdevMonitor::spawn(&*self.runner, self.event_tx.clone()) {
             Ok(monitor) => {
-                logging::info("使用 udev 监听块设备热插拔事件");
+                logging::info("watching block device hotplug events via udev");
                 self.monitor = Some(monitor);
                 self.state.backend = "udev".to_string();
             }
             Err(err) => {
-                logging::warn(format!("无法使用 udev 事件源（{err}），改用轮询模式"));
+                logging::warn(format!(
+                    "cannot use the udev event source ({err}); falling back to polling mode"
+                ));
                 let seconds = if self.config.poll_interval_seconds > 0.0 {
                     self.config.poll_interval_seconds
                 } else {
@@ -166,7 +170,7 @@ impl Daemon {
             .map(|record| record.device.clone())
             .collect();
         for device in stale {
-            logging::debug(format!("清理过期挂载记录 {device}"));
+            logging::debug(format!("pruning stale mount record {device}"));
             self.state.remove(&device);
         }
     }
@@ -185,7 +189,7 @@ impl Daemon {
                 }
                 Err(RecvTimeoutError::Timeout) => {}
                 Err(RecvTimeoutError::Disconnected) => {
-                    logging::warn("事件通道已关闭，事件循环退出");
+                    logging::warn("event channel closed; exiting the event loop");
                     break;
                 }
             }
@@ -270,14 +274,19 @@ impl Daemon {
 
     fn handle_add(&mut self, name: &str) {
         let Some(mut device) = self.wait_for_device(name) else {
-            logging::debug(format!("忽略 {name}：设备已消失或尚未就绪"));
+            logging::debug(format!(
+                "ignoring {name}: the device disappeared or is not ready yet"
+            ));
             return;
         };
         if !device.has_filesystem() {
             device = devices::refresh_device(&device, &*self.runner);
         }
         if !device.has_filesystem() {
-            logging::debug(format!("忽略 {}：没有可识别的文件系统", device.path));
+            logging::debug(format!(
+                "ignoring {}: no recognizable filesystem",
+                device.path
+            ));
             return;
         }
 
@@ -286,16 +295,16 @@ impl Daemon {
         let system_disks = devices::system_disk_names(&all, &mounts);
         let decision = policy::should_automount(&device, &self.config, &system_disks, &mounts);
         if !decision.allowed {
-            logging::debug(format!("跳过 {}：{}", device.path, decision.message));
+            logging::debug(format!("skipping {}: {}", device.path, decision.message));
             return;
         }
         if !self.config.auto_mount_on_hotplug {
-            logging::debug(format!("自动挂载已关闭，跳过 {}", device.path));
+            logging::debug(format!("auto-mount is disabled; skipping {}", device.path));
             return;
         }
         if self.is_suppressed(&device.name) {
             logging::info(format!(
-                "{} 刚刚被手动卸载，{} 秒内不再自动挂载",
+                "{} was just manually unmounted; not auto-mounting for {} seconds",
                 device.name, self.config.suppress_remount_seconds
             ));
             return;
@@ -335,18 +344,18 @@ impl Daemon {
         let mounts = mountinfo::read_mountinfo();
         if mountinfo::find_mount(&mounts, Some(&record.target), None).is_some() {
             match self.manager.unmount(&record.target, false, false, false) {
-                Ok(target) => logging::info(format!("设备移除，已卸载 {target}")),
+                Ok(target) => logging::info(format!("device removed; unmounted {target}")),
                 Err(err) => {
                     logging::warn(format!(
-                        "设备 {} 已移除，但正常卸载 {} 失败（{err}），尝试 lazy 卸载",
+                        "device {} was removed, but a normal unmount of {} failed ({err}); trying a lazy unmount",
                         record.device, record.target
                     ));
                     // The device has physically disappeared, so a lazy unmount can safely
                     // detach the leftover mount from the namespace.
                     match self.manager.unmount(&record.target, true, false, false) {
-                        Ok(target) => logging::info(format!("已 lazy 卸载 {target}")),
+                        Ok(target) => logging::info(format!("lazy-unmounted {target}")),
                         Err(lazy_err) => logging::warn(format!(
-                            "lazy 卸载 {} 也失败，保留记录等待下次扫描: {lazy_err}",
+                            "lazy unmount of {} also failed; keeping the record until the next scan: {lazy_err}",
                             record.target
                         )),
                     }
@@ -355,7 +364,10 @@ impl Daemon {
         }
         if mountinfo::find_mount(&mountinfo::read_mountinfo(), Some(&record.target), None).is_some()
         {
-            logging::warn(format!("{} 仍处于挂载状态，暂不删除记录", record.target));
+            logging::warn(format!(
+                "{} is still mounted; keeping the record for now",
+                record.target
+            ));
             return;
         }
 
@@ -377,7 +389,10 @@ impl Daemon {
             match self.manager.mount(device, user, false, &[]) {
                 Ok(result) => {
                     if result.already_mounted {
-                        logging::debug(format!("{} 已经挂载，无需操作", device.path));
+                        logging::debug(format!(
+                            "{} is already mounted; nothing to do",
+                            device.path
+                        ));
                         return Some(result);
                     }
                     let target = result.target.display().to_string();
@@ -395,10 +410,10 @@ impl Daemon {
                     };
                     self.state.add(record);
                     if let Err(err) = self.state.save() {
-                        logging::warn(format!("保存状态失败: {err}"));
+                        logging::warn(format!("failed to save state: {err}"));
                     }
                     logging::info(format!(
-                        "已自动挂载 {} 到 {}（{}）",
+                        "auto-mounted {} at {} ({})",
                         device.path, target, result.fstype
                     ));
                     self.known.insert(device.name.clone());
@@ -414,7 +429,7 @@ impl Daemon {
                 Err(err) => {
                     let retry = attempt < attempts && is_retryable(&err);
                     logging::warn(format!(
-                        "挂载 {} 失败（第 {attempt}/{attempts} 次）: {err}",
+                        "failed to mount {} (attempt {attempt}/{attempts}): {err}",
                         device.path
                     ));
                     if !retry {
@@ -442,13 +457,19 @@ impl Daemon {
             Some(hint) => format!("{}\n{hint}", err.message),
             None => err.message.clone(),
         };
-        notify::notify_error(&self.config, &*self.runner, "磁盘挂载失败", &detail, user);
+        notify::notify_error(
+            &self.config,
+            &*self.runner,
+            "Disk mount failed",
+            &detail,
+            user,
+        );
     }
 
     /// Mount at boot, or scan for devices missed by earlier periodic scans.
     fn reconcile(&mut self, boot: bool) {
         if boot && !self.config.auto_mount_on_boot {
-            logging::info("auto_mount_on_boot 已关闭，跳过开机挂载");
+            logging::info("auto_mount_on_boot is disabled; skipping boot-time mounting");
         }
         if !boot && !self.config.auto_mount_on_hotplug {
             return;
@@ -475,7 +496,10 @@ impl Daemon {
             }
             let decision = policy::should_automount(device, &self.config, &system_disks, &mounts);
             if !decision.allowed {
-                logging::debug(format!("{} 不自动挂载：{}", device.path, decision.message));
+                logging::debug(format!(
+                    "{} is not auto-mounted: {}",
+                    device.path, decision.message
+                ));
                 continue;
             }
             let reason = if boot { "boot" } else { "scan" };
@@ -545,10 +569,12 @@ impl Daemon {
             "reload" => self.reload_response(),
             "shutdown" => {
                 self.request_stop();
-                Ok(CtlResponse::success().with_meta("message", "automountd 正在停止"))
+                Ok(CtlResponse::success().with_meta("message", "automountd is stopping"))
             }
-            other => Err(Error::protocol(format!("未知控制命令: {other}"))
-                .with_hint("请升级命令行工具，或执行 'automountd --help' 查看支持的命令")),
+            other => Err(Error::protocol(format!("unknown control command: {other}"))
+                .with_hint(
+                    "upgrade the CLI tool, or run 'automountd --help' to list the supported commands",
+                )),
         };
 
         match result {
@@ -563,15 +589,15 @@ impl Daemon {
         }
         if !self.user_allowed(uid) {
             return Err(Error::permission(format!(
-                "uid {uid} 不在 ctl_allowed_users 中，无权访问自动挂载服务"
+                "uid {uid} is not in ctl_allowed_users and may not access the automount service"
             ))
-            .with_hint("请让 root 修改配置中的 ctl_allowed_users"));
+            .with_hint("ask root to update ctl_allowed_users in the configuration"));
         }
         if matches!(command, "shutdown" | "reload") {
             let console_uid = self.current_user().map(|user| user.uid);
             if console_uid != Some(uid) {
                 return Err(Error::permission(
-                    "只有 root 或当前桌面登录用户可以执行该命令",
+                    "only root or the current desktop user may run this command",
                 ));
             }
         }
@@ -627,13 +653,13 @@ impl Daemon {
                     .path
                     .as_ref()
                     .map(|path| path.display().to_string())
-                    .unwrap_or_else(|| "(默认值)".to_string()),
+                    .unwrap_or_else(|| "(default)".to_string()),
             )
             .with_meta(
                 "user",
                 user.as_ref()
                     .map(|user| user.display())
-                    .unwrap_or_else(|| "未识别".to_string()),
+                    .unwrap_or_else(|| "not detected".to_string()),
             );
         if self.config.allowed_uuids.is_empty() {
             response = response.with_meta("allowed_uuids", "-");
@@ -671,14 +697,16 @@ impl Daemon {
             .args
             .first()
             .map(String::as_str)
-            .ok_or_else(|| Error::config("mount 命令缺少设备参数"))?;
+            .ok_or_else(|| Error::config("mount command is missing the device argument"))?;
         let read_only = request.args.get(1).map(|v| v == "1").unwrap_or(false);
         let force = request.args.get(2).map(|v| v == "1").unwrap_or(false);
         if force && peer_uid != 0 {
-            return Err(
-                Error::permission("只有 root 可以通过控制接口强制挂载（--force）")
-                    .with_hint("普通用户挂载系统盘或忽略策略需要 sudo 直接执行"),
-            );
+            return Err(Error::permission(
+                "only root may force a mount through the control interface (--force)",
+            )
+            .with_hint(
+                "non-root users must run sudo directly to mount system disks or bypass policy",
+            ));
         }
 
         let all = devices::list_devices(&*self.runner, false, true);
@@ -735,11 +763,9 @@ impl Daemon {
     }
 
     fn unmount_request(&mut self, request: &CtlRequest, peer_uid: u32) -> Result<CtlResponse> {
-        let reference = request
-            .args
-            .first()
-            .map(String::as_str)
-            .ok_or_else(|| Error::config("umount 命令缺少设备或挂载点参数"))?;
+        let reference = request.args.first().map(String::as_str).ok_or_else(|| {
+            Error::config("umount command is missing the device or mount point argument")
+        })?;
         let lazy = request.args.get(1).map(|v| v == "1").unwrap_or(false);
         let eject = request.args.get(2).map(|v| v == "1").unwrap_or(false);
 
@@ -759,7 +785,7 @@ impl Daemon {
                     .ok_or_else(|| {
                         Error::new(
                             ErrorKind::NotMounted,
-                            format!("{} 当前没有挂载", device.path),
+                            format!("{} is not mounted", device.path),
                         )
                     })?;
                 let record = self.state.find_by_target(&entry).cloned();
@@ -768,9 +794,11 @@ impl Daemon {
 
         if !self.is_safe_target(&target) {
             return Err(Error::permission(format!(
-                "拒绝卸载 {target}：只能卸载 automountd 管理的挂载点或 mount_root 下的挂载点"
+                "refusing to unmount {target}: only automountd-managed mount points or mount points under mount_root may be unmounted"
             ))
-            .with_hint("该挂载点可能由 /etc/fstab 或系统管理，请使用 umount 命令手动处理"));
+            .with_hint(
+                "this mount point may be managed by /etc/fstab or the system; unmount it manually with the umount command",
+            ));
         }
 
         if peer_uid != 0 {
@@ -778,9 +806,9 @@ impl Daemon {
             let console_uid = self.current_user().map(|user| user.uid);
             if owner != Some(peer_uid) && console_uid != Some(peer_uid) {
                 return Err(Error::permission(format!(
-                    "uid {peer_uid} 不能卸载 {target}：不是该挂载的所有者，也不是当前桌面用户"
+                    "uid {peer_uid} may not unmount {target}: not the owner of this mount and not the current desktop user"
                 ))
-                .with_hint("如确需卸载，请使用 sudo"));
+                .with_hint("use sudo if you really need to unmount it"));
             }
         }
 
@@ -832,7 +860,7 @@ impl Daemon {
             .saturating_add(20);
         self.ctl.set_job_timeout(Duration::from_secs(job_timeout));
         self.state.save()?;
-        logging::info("配置已重新加载");
+        logging::info("configuration reloaded");
         Ok(CtlResponse::success()
             .with_meta("reloaded", "1")
             .with_meta("socket_changed", yes_no(socket_changed))
@@ -845,9 +873,9 @@ impl Daemon {
         }
         self.ctl.stop();
         if let Err(err) = self.state.save() {
-            logging::warn(format!("退出前保存状态失败: {err}"));
+            logging::warn(format!("failed to save state before exit: {err}"));
         }
-        logging::info("automountd 已停止");
+        logging::info("automountd stopped");
     }
 }
 
@@ -877,7 +905,7 @@ fn is_retryable(err: &Error) -> bool {
 fn failure_response(err: &Error) -> CtlResponse {
     let mut message = err.message.clone();
     if let Some(hint) = &err.hint {
-        message.push_str("\n提示: ");
+        message.push_str("\nhint: ");
         message.push_str(hint);
     }
     CtlResponse::failure(kind_code(err.kind), &message)

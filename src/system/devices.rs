@@ -41,7 +41,7 @@ pub fn list_devices(
 
     if devices.is_empty() && Path::new(SYSFS_BLOCK_DIR).is_dir() {
         logging::debug(format!(
-            "lsblk 不可用或输出无法解析，改用 {SYSFS_BLOCK_DIR} 枚举块设备"
+            "lsblk unavailable or its output could not be parsed; enumerating block devices from {SYSFS_BLOCK_DIR}"
         ));
         devices = list_sysfs(Path::new(SYSFS_BLOCK_DIR), runner);
     }
@@ -56,20 +56,23 @@ pub fn list_devices(
 pub fn parse_lsblk(text: &str) -> Result<Vec<BlockDevice>> {
     let text = text.trim().trim_start_matches('\u{feff}');
     if text.is_empty() {
-        return Err(Error::device("lsblk 输出为空，无法解析设备列表")
-            .with_hint("请确认 util-linux 已正确安装（lsblk -J 应输出 JSON）"));
+        return Err(
+            Error::device("lsblk produced no output, cannot parse the device list").with_hint(
+                "Make sure util-linux is installed correctly (lsblk -J should print JSON)",
+            ),
+        );
     }
     let document = JsonParser::new(text).parse_document().map_err(|reason| {
-        Error::device(format!("解析 lsblk JSON 失败: {reason}"))
-            .with_hint("请确认 lsblk 来自 util-linux 2.27 或更新版本")
+        Error::device(format!("failed to parse lsblk JSON: {reason}"))
+            .with_hint("Make sure lsblk comes from util-linux 2.27 or newer")
     })?;
 
     let Some(blockdevices) = document.get("blockdevices") else {
-        return Err(Error::device("lsblk JSON 中缺少 blockdevices 字段")
-            .with_hint("请确认命令为 'lsblk -J -b -o ...'"));
+        return Err(Error::device("lsblk JSON has no blockdevices field")
+            .with_hint("Make sure the command is 'lsblk -J -b -o ...'"));
     };
     let Some(items) = blockdevices.as_array() else {
-        return Err(Error::device("lsblk JSON 中 blockdevices 不是数组"));
+        return Err(Error::device("blockdevices in lsblk JSON is not an array"));
     };
 
     let mut devices = Vec::new();
@@ -83,20 +86,20 @@ pub fn parse_lsblk(text: &str) -> Result<Vec<BlockDevice>> {
 /// Read filesystem information with blkid; returns an empty map on failure or when there is no filesystem.
 pub fn probe_blkid(runner: &dyn CommandRunner, device_path: &str) -> BTreeMap<String, String> {
     if !runner.which("blkid") {
-        logging::debug("未找到 blkid，跳过文件系统探测");
+        logging::debug("blkid not found, skipping filesystem probing");
         return BTreeMap::new();
     }
     let output = match runner.run("blkid", &["-o", "export", device_path], Some(PROBE_TIMEOUT)) {
         Ok(output) => output,
         Err(err) => {
-            logging::debug(format!("探测 {device_path} 失败: {err}"));
+            logging::debug(format!("failed to probe {device_path}: {err}"));
             return BTreeMap::new();
         }
     };
     if !output.ok() {
         // blkid exits non-zero for devices without a filesystem, which is expected.
         logging::debug(format!(
-            "blkid 未能在 {device_path} 上找到文件系统（退出码 {}）",
+            "blkid found no filesystem on {device_path} (exit code {})",
             output.status
         ));
         return BTreeMap::new();
@@ -115,7 +118,10 @@ pub fn refresh_device(device: &BlockDevice, runner: &dyn CommandRunner) -> Block
 
     let info = probe_blkid(runner, &updated.path);
     if info.is_empty() {
-        logging::debug(format!("{} 仍无法探测到文件系统信息", updated.path));
+        logging::debug(format!(
+            "{} still has no discoverable filesystem info",
+            updated.path
+        ));
         return updated;
     }
     if missing_fstype {
@@ -143,8 +149,11 @@ pub fn refresh_device(device: &BlockDevice, runner: &dyn CommandRunner) -> Block
 pub fn resolve_device(devices: &[BlockDevice], reference: &str) -> Result<BlockDevice> {
     let reference = reference.trim();
     if reference.is_empty() {
-        return Err(Error::device("设备引用不能为空")
-            .with_hint("可用 UUID=、/dev/sdb1、/dev/disk/by-uuid/... 或卷标指定设备"));
+        return Err(
+            Error::device("device reference must not be empty").with_hint(
+                "Use UUID=, /dev/sdb1, /dev/disk/by-uuid/... or a volume label to name a device",
+            ),
+        );
     }
 
     let matches: Vec<&BlockDevice> =
@@ -169,8 +178,8 @@ pub fn resolve_device(devices: &[BlockDevice], reference: &str) -> Result<BlockD
         };
 
     match matches.as_slice() {
-        [] => Err(Error::device(format!("找不到设备 {reference}")).with_hint(
-            "运行 'automountd list --all' 查看当前可用的块设备；也可用 UUID= 或完整设备路径指定",
+        [] => Err(Error::device(format!("device not found: {reference}")).with_hint(
+            "Run 'automountd list --all' to see the available block devices; you can also specify one with UUID= or a full device path",
         )),
         [only] => Ok((*only).clone()),
         many => {
@@ -178,15 +187,15 @@ pub fn resolve_device(devices: &[BlockDevice], reference: &str) -> Result<BlockD
                 .iter()
                 .map(|device| {
                     let label = device.label.as_deref().unwrap_or("-");
-                    format!("{}（{}，卷标 {label}）", device.path, device.dev_type)
+                    format!("{} ({}, label {label})", device.path, device.dev_type)
                 })
                 .collect();
             Err(Error::device(format!(
-                "设备引用 {reference} 匹配到 {} 个设备: {}",
+                "device reference {reference} matches {} devices: {}",
                 many.len(),
-                candidates.join("、")
+                candidates.join(", ")
             ))
-            .with_hint("请改用 UUID=... 或完整的设备路径来精确指定设备"))
+            .with_hint("Use UUID=... or a full device path to identify the device unambiguously"))
         }
     }
 }
@@ -230,7 +239,7 @@ pub fn top_level_name(devices: &[BlockDevice], device: &BlockDevice) -> String {
         };
         if !seen.insert(parent.to_string()) {
             logging::warn(format!(
-                "设备 {} 的父子关系存在环，已停止向上追溯",
+                "parent/child relationship of device {} contains a cycle; stopped walking up",
                 device.name
             ));
             break;
@@ -287,7 +296,7 @@ pub fn system_disk_names(devices: &[BlockDevice], mounts: &[MountEntry]) -> Hash
             // The device is not in the current list (container, restricted permissions,
             // ...), so at least protect the node names we know about.
             logging::debug(format!(
-                "系统挂载点 {} 的设备 {} 不在设备列表中，按节点名保护",
+                "device {} of system mount point {} is not in the device list; protecting it by node name",
                 entry.target, entry.source
             ));
             for candidate in candidates {
@@ -360,7 +369,10 @@ impl<'a> JsonParser<'a> {
         let value = self.parse_value(0)?;
         self.skip_ws();
         if self.pos < self.bytes.len() {
-            return Err(format!("JSON 末尾存在多余内容（偏移 {}）", self.pos));
+            return Err(format!(
+                "trailing content after JSON document (offset {})",
+                self.pos
+            ));
         }
         Ok(value)
     }
@@ -388,18 +400,21 @@ impl<'a> JsonParser<'a> {
         match self.bump() {
             Some(byte) if byte == expected => Ok(()),
             Some(byte) => Err(format!(
-                "偏移 {} 处期望 '{}'，实际为 '{}'",
+                "at offset {} expected '{}', found '{}'",
                 self.pos - 1,
                 expected as char,
                 byte as char
             )),
-            None => Err(format!("JSON 意外结束，期望 '{}'", expected as char)),
+            None => Err(format!(
+                "unexpected end of JSON, expected '{}'",
+                expected as char
+            )),
         }
     }
 
     fn parse_value(&mut self, depth: usize) -> JsonResult<Json> {
         if depth > 96 {
-            return Err("JSON 嵌套层级过深".to_string());
+            return Err("JSON nesting is too deep".to_string());
         }
         match self.peek() {
             Some(b'{') => self.parse_object(depth),
@@ -410,10 +425,10 @@ impl<'a> JsonParser<'a> {
             Some(b'n') => self.parse_literal("null", Json::Null),
             Some(byte) if byte == b'-' || byte.is_ascii_digit() => self.parse_number(),
             Some(byte) => Err(format!(
-                "偏移 {} 处出现非法字符 '{}'",
+                "at offset {} found invalid character '{}'",
                 self.pos, byte as char
             )),
-            None => Err("JSON 在读取值时意外结束".to_string()),
+            None => Err("JSON ended unexpectedly while reading a value".to_string()),
         }
     }
 
@@ -422,9 +437,9 @@ impl<'a> JsonParser<'a> {
         let slice = self
             .bytes
             .get(self.pos..end)
-            .ok_or_else(|| format!("偏移 {} 处的字面量不完整", self.pos))?;
+            .ok_or_else(|| format!("incomplete literal at offset {}", self.pos))?;
         if slice != literal.as_bytes() {
-            return Err(format!("偏移 {} 处期望字面量 {literal}", self.pos));
+            return Err(format!("expected literal {literal} at offset {}", self.pos));
         }
         self.pos = end;
         Ok(value)
@@ -448,9 +463,9 @@ impl<'a> JsonParser<'a> {
             self.pos += 1;
         }
         let text = std::str::from_utf8(&self.bytes[start..self.pos])
-            .map_err(|err| format!("偏移 {start} 处的数字不是合法 UTF-8: {err}"))?;
+            .map_err(|err| format!("number at offset {start} is not valid UTF-8: {err}"))?;
         if text.is_empty() || text.parse::<f64>().is_err() {
-            return Err(format!("偏移 {start} 处的数字非法: {text:?}"));
+            return Err(format!("invalid number at offset {start}: {text:?}"));
         }
         Ok(Json::Number(text.to_string()))
     }
@@ -472,12 +487,12 @@ impl<'a> JsonParser<'a> {
                 Some(b']') => break,
                 Some(byte) => {
                     return Err(format!(
-                        "偏移 {} 处期望 ',' 或 ']'，实际为 '{}'",
+                        "at offset {} expected ',' or ']', found '{}'",
                         self.pos - 1,
                         byte as char
                     ))
                 }
-                None => return Err("JSON 数组未闭合".to_string()),
+                None => return Err("JSON array is not closed".to_string()),
             }
         }
         Ok(Json::Array(items))
@@ -494,7 +509,10 @@ impl<'a> JsonParser<'a> {
         loop {
             self.skip_ws();
             if self.peek() != Some(b'"') {
-                return Err(format!("偏移 {} 处对象的键必须是字符串", self.pos));
+                return Err(format!(
+                    "object key at offset {} must be a string",
+                    self.pos
+                ));
             }
             let key = self.parse_string()?;
             self.skip_ws();
@@ -508,12 +526,12 @@ impl<'a> JsonParser<'a> {
                 Some(b'}') => break,
                 Some(byte) => {
                     return Err(format!(
-                        "偏移 {} 处期望 ',' 或 '}}'，实际为 '{}'",
+                        "at offset {} expected ',' or '}}', found '{}'",
                         self.pos - 1,
                         byte as char
                     ))
                 }
-                None => return Err("JSON 对象未闭合".to_string()),
+                None => return Err("JSON object is not closed".to_string()),
             }
         }
         Ok(Json::Object(pairs))
@@ -524,7 +542,7 @@ impl<'a> JsonParser<'a> {
         let mut out: Vec<u8> = Vec::new();
         loop {
             let Some(byte) = self.bump() else {
-                return Err("JSON 字符串未闭合".to_string());
+                return Err("JSON string is not closed".to_string());
             };
             match byte {
                 b'"' => break,
@@ -534,12 +552,14 @@ impl<'a> JsonParser<'a> {
                     out.extend_from_slice(escaped.encode_utf8(&mut buffer).as_bytes());
                 }
                 byte if byte < 0x20 => {
-                    return Err(format!("JSON 字符串中出现未转义的控制字符 0x{byte:02x}"))
+                    return Err(format!(
+                        "unescaped control character 0x{byte:02x} in JSON string"
+                    ))
                 }
                 byte => out.push(byte),
             }
         }
-        String::from_utf8(out).map_err(|err| format!("JSON 字符串不是合法 UTF-8: {err}"))
+        String::from_utf8(out).map_err(|err| format!("JSON string is not valid UTF-8: {err}"))
     }
 
     fn parse_escape(&mut self) -> JsonResult<char> {
@@ -555,7 +575,7 @@ impl<'a> JsonParser<'a> {
             Some(b'u') => {
                 let first = self.read_hex4()?;
                 if (0xDC00..=0xDFFF).contains(&first) {
-                    return Err(format!("\\u{first:04X} 是孤立的 UTF-16 低代理项"));
+                    return Err(format!("\\u{first:04X} is a lone UTF-16 low surrogate"));
                 }
                 if (0xD800..=0xDBFF).contains(&first) {
                     let save = self.pos;
@@ -571,12 +591,13 @@ impl<'a> JsonParser<'a> {
                         }
                         self.pos = save;
                     }
-                    return Err(format!("\\u{first:04X} 是孤立的 UTF-16 高代理项"));
+                    return Err(format!("\\u{first:04X} is a lone UTF-16 high surrogate"));
                 }
-                char::from_u32(first).ok_or_else(|| format!("无效的 Unicode 转义 \\u{first:04X}"))
+                char::from_u32(first)
+                    .ok_or_else(|| format!("invalid Unicode escape \\u{first:04X}"))
             }
-            Some(byte) => Err(format!("字符串中出现未知转义 '\\{}'", byte as char)),
-            None => Err("字符串转义序列不完整".to_string()),
+            Some(byte) => Err(format!("unknown escape '\\{}' in string", byte as char)),
+            None => Err("string escape sequence is incomplete".to_string()),
         }
     }
 
@@ -584,13 +605,18 @@ impl<'a> JsonParser<'a> {
         let mut value: u32 = 0;
         for _ in 0..4 {
             let Some(byte) = self.bump() else {
-                return Err("\\u 转义缺少 4 位十六进制数字".to_string());
+                return Err("\\u escape is missing its 4 hex digits".to_string());
             };
             let digit = match byte {
                 b'0'..=b'9' => byte - b'0',
                 b'a'..=b'f' => byte - b'a' + 10,
                 b'A'..=b'F' => byte - b'A' + 10,
-                _ => return Err(format!("\\u 转义中出现非十六进制字符 '{}'", byte as char)),
+                _ => {
+                    return Err(format!(
+                        "non-hex character '{}' in \\u escape",
+                        byte as char
+                    ))
+                }
             };
             value = value * 16 + u32::from(digit);
         }
@@ -601,7 +627,7 @@ impl<'a> JsonParser<'a> {
 /// Flatten one lsblk node, recursing into `children`.
 fn flatten_node(node: &Json, parent: Option<&str>, out: &mut Vec<BlockDevice>) {
     let Some(name) = node_name(node) else {
-        logging::debug("lsblk 输出中存在缺少 name 的设备节点，已跳过");
+        logging::debug("skipped an lsblk device node without a name");
         return;
     };
     let children_nodes = node.get("children").and_then(Json::as_array);
@@ -757,13 +783,13 @@ fn lsblk_devices(runner: &dyn CommandRunner, columns: &str) -> Option<Vec<BlockD
     let output = match runner.run("lsblk", &["-J", "-b", "-o", columns], Some(PROBE_TIMEOUT)) {
         Ok(output) => output,
         Err(err) => {
-            logging::debug(format!("执行 lsblk 失败: {err}"));
+            logging::debug(format!("failed to run lsblk: {err}"));
             return None;
         }
     };
     if !output.ok() {
         logging::debug(format!(
-            "lsblk 退出码 {}：{}",
+            "lsblk exited with code {}: {}",
             output.status,
             output.stderr_trimmed()
         ));
@@ -772,11 +798,11 @@ fn lsblk_devices(runner: &dyn CommandRunner, columns: &str) -> Option<Vec<BlockD
     match parse_lsblk(&output.stdout) {
         Ok(devices) if !devices.is_empty() => Some(devices),
         Ok(_) => {
-            logging::debug("lsblk 没有返回任何块设备");
+            logging::debug("lsblk returned no block devices");
             None
         }
         Err(err) => {
-            logging::debug(format!("lsblk 输出无法解析: {err}"));
+            logging::debug(format!("failed to parse lsblk output: {err}"));
             None
         }
     }
@@ -798,7 +824,7 @@ fn list_sysfs(root: &Path, runner: &dyn CommandRunner) -> Vec<BlockDevice> {
             }
         }
         Err(err) => {
-            logging::warn(format!("无法读取 {}: {err}", root.display()));
+            logging::warn(format!("failed to read {}: {err}", root.display()));
             return Vec::new();
         }
     }
@@ -1148,7 +1174,7 @@ mod tests {
         sdb1.fstype = Some("exfat".to_string());
         sdb1.uuid = Some("ABCD-1234".to_string());
         sdb1.partuuid = Some("part-sdb1".to_string());
-        sdb1.label = Some("备份盘".to_string());
+        sdb1.label = Some("Café Disk".to_string());
         sdb1.parent = Some("sdb".to_string());
         sdb1.removable = true;
         sdb1.size = 31 * 1024 * 1024 * 1024;
@@ -1158,9 +1184,9 @@ mod tests {
 
     fn write_file(path: &Path, text: &str) {
         if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).expect("创建目录失败");
+            std::fs::create_dir_all(parent).expect("failed to create directory");
         }
-        std::fs::write(path, text).expect("写入文件失败");
+        std::fs::write(path, text).expect("failed to write file");
     }
 
     #[test]
@@ -1176,7 +1202,7 @@ mod tests {
              ]},
             {"name":"sdb","type":"disk","rm":"1","hotplug":"1","tran":"usb","size":"1.5G",
              "children":[
-               {"name":"sdb1","type":"part","fstype":"exfat","label":"备份盘",
+               {"name":"sdb1","type":"part","fstype":"exfat","label":"Café Disk",
                 "uuid":"ABCD-1234","size":"1600000000","rm":"1","ro":"0","hotplug":"1",
                 "pkname":"sdb"}
              ]}
@@ -1208,7 +1234,7 @@ mod tests {
         assert_eq!(sdb.size, 1_610_612_736);
 
         let sdb1 = devices.iter().find(|d| d.name == "sdb1").unwrap();
-        assert_eq!(sdb1.label.as_deref(), Some("备份盘"));
+        assert_eq!(sdb1.label.as_deref(), Some("Café Disk"));
         // "0" must parse as false
         assert!(!sdb1.read_only);
     }
@@ -1217,13 +1243,13 @@ mod tests {
     fn parses_json_escapes_and_unicode() {
         let text = r#"{"blockdevices":[
             {"name":"sdc","type":"disk",
-             "label":"\u5907\u4efd\u76d8 \/ \"A\"\tB",
+             "label":"Caf\u00e9 \/ \"A\"\tB",
              "model":"Disk\\Pro",
              "serial":"\ud83d\ude00"}
         ]}"#;
         let devices = parse_lsblk(text).unwrap();
         assert_eq!(devices.len(), 1);
-        assert_eq!(devices[0].label.as_deref(), Some("备份盘 / \"A\"\tB"));
+        assert_eq!(devices[0].label.as_deref(), Some("Café / \"A\"\tB"));
         assert_eq!(devices[0].model.as_deref(), Some("Disk\\Pro"));
         assert_eq!(devices[0].serial.as_deref(), Some("😀"));
     }
@@ -1243,7 +1269,7 @@ mod tests {
             "not json",
             "{\"blockdevices\": [{\"name\":\"sda\"}]} trailing",
         ] {
-            assert!(parse_lsblk(bad).is_err(), "应当解析失败: {bad}");
+            assert!(parse_lsblk(bad).is_err(), "should fail to parse: {bad}");
         }
     }
 
@@ -1266,7 +1292,7 @@ mod tests {
         let lsblk_call = calls
             .iter()
             .find(|(program, _)| program == "lsblk")
-            .expect("应当调用 lsblk");
+            .expect("lsblk should have been called");
         assert_eq!(lsblk_call.1, vec!["-J", "-b", "-o", FULL_COLUMNS]);
 
         // include_loop = true keeps loop devices
@@ -1394,20 +1420,20 @@ mod tests {
             ("uuid:ABCD-1234", "sdb1"),
             ("/dev/disk/by-uuid/ABCD-1234", "sdb1"),
             ("PARTUUID=part-sdb1", "sdb1"),
-            ("LABEL=备份盘", "sdb1"),
-            ("备份盘", "sdb1"),
+            ("LABEL=Café Disk", "sdb1"),
+            ("Café Disk", "sdb1"),
             ("PARTUUID=part-sda1", "sda1"),
             ("sda2", "sda2"),
-            ("/dev/disk/by-label/备份盘", "sdb1"),
+            ("/dev/disk/by-label/Café Disk", "sdb1"),
         ];
         for (reference, expected) in cases {
             let device = resolve_device(&devices, reference)
-                .unwrap_or_else(|err| panic!("解析 {reference} 失败: {err}"));
-            assert_eq!(device.name, expected, "引用 {reference}");
+                .unwrap_or_else(|err| panic!("failed to resolve {reference}: {err}"));
+            assert_eq!(device.name, expected, "reference {reference}");
         }
 
         let err = resolve_device(&devices, "zzz").unwrap_err();
-        assert!(err.message.contains("找不到设备"));
+        assert!(err.message.contains("device not found"));
         assert!(err
             .hint
             .as_deref()
@@ -1423,12 +1449,12 @@ mod tests {
         let mut devices = library_devices();
         let mut clone = sample_device("sdc1");
         clone.fstype = Some("exfat".to_string());
-        clone.label = Some("备份盘".to_string());
+        clone.label = Some("Café Disk".to_string());
         clone.parent = Some("sdc".to_string());
         devices.push(clone);
 
-        let err = resolve_device(&devices, "LABEL=备份盘").unwrap_err();
-        assert!(err.message.contains("匹配到 2 个设备"), "{}", err.message);
+        let err = resolve_device(&devices, "LABEL=Café Disk").unwrap_err();
+        assert!(err.message.contains("matches 2 devices"), "{}", err.message);
         assert!(err.message.contains("/dev/sdb1"));
         assert!(err.message.contains("/dev/sdc1"));
         assert!(err.hint.is_some());
@@ -1457,7 +1483,7 @@ mod tests {
         second.parent = Some("sdx".to_string());
         let cyclic = vec![first, second];
         let top = top_level_name(&cyclic, &cyclic[0]);
-        assert!(top == "sdx" || top == "sdy", "意外的结果: {top}");
+        assert!(top == "sdx" || top == "sdy", "unexpected result: {top}");
     }
 
     #[test]
@@ -1502,8 +1528,14 @@ mod tests {
             "25 21 8:5 / /home rw - exfat /dev/sdc1 rw\n",
         ));
         let names = system_disk_names(&devices, &mounts);
-        assert!(names.contains("sda"), "系统盘应包含 sda: {names:?}");
-        assert!(!names.contains("sdc"), "数据盘不应被当成系统盘");
+        assert!(
+            names.contains("sda"),
+            "system disks should contain sda: {names:?}"
+        );
+        assert!(
+            !names.contains("sdc"),
+            "data disk must not count as a system disk"
+        );
         assert!(!names.contains("proc"));
 
         // An empty mount table yields no system disks

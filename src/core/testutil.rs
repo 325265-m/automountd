@@ -35,9 +35,9 @@ impl TempDir {
             }
         }
 
-        let (path, err) = last_error.expect("至少应尝试一个临时目录");
+        let (path, err) = last_error.expect("at least one temporary directory must be attempted");
         panic!(
-            "创建临时目录失败 {}（系统 temp={:?}）: {err}",
+            "failed to create temporary directory {} (system temp={:?}): {err}",
             path.display(),
             std::env::temp_dir()
         );
@@ -53,7 +53,7 @@ impl TempDir {
 
     pub fn write(&self, name: &str, text: &str) -> PathBuf {
         let path = self.join(name);
-        std::fs::write(&path, text).expect("写入临时文件失败");
+        std::fs::write(&path, text).expect("failed to write temporary file");
         path
     }
 }

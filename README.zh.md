@@ -138,8 +138,8 @@ automountd --lang en status
 AUTOMOUNTD_LANG=zh automountd doctor
 ```
 
-`--lang` 必须放在子命令之前。当前英文覆盖帮助、TUI、列表/状态、doctor 与主要命令输出；
-部分来自 core/system 的详细错误消息仍在逐步翻译。
+`--lang` 必须放在子命令之前。CLI/TUI 的界面文案（帮助、表格、提示、状态）会本地化；
+`core`/`system` 的错误与日志统一为英文。
 
 ## 配置
 

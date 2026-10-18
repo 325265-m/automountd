@@ -75,8 +75,11 @@ impl CommandRunner for SystemRunner {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
         let mut child = command.spawn().map_err(|err| {
-            Error::new(ErrorKind::Command, format!("无法执行 {program}: {err}"))
-                .with_hint("请确认 util-linux 等基础工具已安装，且 PATH 正确")
+            Error::new(
+                ErrorKind::Command,
+                format!("failed to execute {program}: {err}"),
+            )
+            .with_hint("Make sure base tools such as util-linux are installed and PATH is correct")
         })?;
 
         let stdout = child.stdout.take();
@@ -94,7 +97,7 @@ impl CommandRunner for SystemRunner {
                     let _ = child.wait();
                     return Err(Error::new(
                         ErrorKind::Command,
-                        format!("等待 {program} 结束时出错: {err}"),
+                        format!("error while waiting for {program} to exit: {err}"),
                     ));
                 }
             }
@@ -104,9 +107,11 @@ impl CommandRunner for SystemRunner {
                     let _ = child.wait();
                     return Err(Error::new(
                         ErrorKind::Command,
-                        format!("命令 {program} 执行超时（{} 秒）", limit.as_secs()),
+                        format!("command {program} timed out ({} seconds)", limit.as_secs()),
                     )
-                    .with_hint("设备可能无响应；可检查 dmesg 或尝试重新插拔"));
+                    .with_hint(
+                        "The device may be unresponsive; check dmesg or try re-plugging it",
+                    ));
                 }
             }
             std::thread::sleep(Duration::from_millis(15));

@@ -185,10 +185,11 @@ impl Config {
         if let Some(path) = path {
             let expanded = expand_tilde(path);
             if !expanded.is_file() {
-                return Err(
-                    Error::config(format!("配置文件不存在: {}", expanded.display()))
-                        .with_hint("运行 'automountd config init' 生成默认配置"),
-                );
+                return Err(Error::config(format!(
+                    "configuration file does not exist: {}",
+                    expanded.display()
+                ))
+                .with_hint("run 'automountd config init' to generate a default configuration"));
             }
             return Self::from_file(&expanded);
         }
@@ -199,7 +200,7 @@ impl Config {
                 return Self::from_file(&expanded);
             }
             logging::warn(format!(
-                "环境变量 {ENV_CONFIG} 指向的文件不存在: {}",
+                "environment variable {ENV_CONFIG} points to a missing file: {}",
                 expanded.display()
             ));
         }
@@ -215,8 +216,12 @@ impl Config {
     }
 
     pub fn from_file(path: &Path) -> Result<Self> {
-        let text = fs::read_to_string(path)
-            .map_err(|err| Error::config(format!("无法读取配置文件 {}: {err}", path.display())))?;
+        let text = fs::read_to_string(path).map_err(|err| {
+            Error::config(format!(
+                "cannot read configuration file {}: {err}",
+                path.display()
+            ))
+        })?;
         let mut config = Self::parse(&text)?;
         config.path = Some(path.to_path_buf());
         Ok(config)
@@ -236,23 +241,27 @@ impl Config {
             if trimmed.starts_with('[') {
                 if !trimmed.ends_with(']') {
                     return Err(Error::config(format!(
-                        "第 {line_number} 行：节标题缺少 ']': {trimmed}"
+                        "line {line_number}: section header is missing ']': {trimmed}"
                     )));
                 }
                 section = trimmed[1..trimmed.len() - 1].trim().to_string();
                 if !section.is_empty() && section != "mount_options" {
-                    logging::warn(format!("忽略未知配置节 [{section}]（第 {line_number} 行）"));
+                    logging::warn(format!(
+                        "ignoring unknown configuration section [{section}] (line {line_number})"
+                    ));
                 }
                 continue;
             }
             let Some((key, value)) = trimmed.split_once('=') else {
                 return Err(Error::config(format!(
-                    "第 {line_number} 行不是 key = value 形式: {trimmed}"
+                    "line {line_number} is not in key = value form: {trimmed}"
                 )));
             };
             let key = key.trim();
             if key.is_empty() {
-                return Err(Error::config(format!("第 {line_number} 行缺少键名")));
+                return Err(Error::config(format!(
+                    "line {line_number} is missing a key name"
+                )));
             }
             let full_key = if section.is_empty() {
                 key.to_string()
@@ -270,7 +279,7 @@ impl Config {
         if let Some(name) = key.strip_prefix("mount_options.") {
             if name.is_empty() {
                 return Err(Error::config(format!(
-                    "第 {line} 行：mount_options 下的文件系统名为空"
+                    "line {line}: filesystem name under mount_options is empty"
                 )));
             }
             self.mount_options
@@ -333,7 +342,9 @@ impl Config {
             "dry_run" => self.dry_run = parse_bool(value, key, line)?,
             "version" | "config_version" => {}
             other => {
-                logging::warn(format!("第 {line} 行：忽略未知配置项 {other}"));
+                logging::warn(format!(
+                    "line {line}: ignoring unknown configuration key {other}"
+                ));
             }
         }
         Ok(())
@@ -350,13 +361,13 @@ impl Config {
         if self.mount_root.is_absolute() || self.mount_root.to_string_lossy().starts_with('/') {
             let normalized = normalize_path_text(&self.mount_root);
             if normalized == "/" {
-                problems.push("mount_root 不能是 /".to_string());
+                problems.push("mount_root must not be /".to_string());
             }
             for forbidden in [
                 "/proc", "/sys", "/dev", "/boot", "/etc", "/usr", "/bin", "/sbin",
             ] {
                 if normalized == forbidden || normalized.starts_with(&format!("{forbidden}/")) {
-                    problems.push(format!("mount_root 不能位于 {forbidden} 之下"));
+                    problems.push(format!("mount_root must not be under {forbidden}"));
                     break;
                 }
             }
@@ -364,12 +375,12 @@ impl Config {
 
         if let Some(user) = &self.user {
             if user.trim().is_empty() {
-                problems.push("user 不能是空字符串".to_string());
+                problems.push("user must not be an empty string".to_string());
             }
         }
 
         if self.mount_options.values().any(|opts| opts.is_empty()) {
-            problems.push("mount_options 中存在空选项列表".to_string());
+            problems.push("mount_options contains an empty option list".to_string());
         }
 
         for (name, value, low, high) in [
@@ -383,13 +394,15 @@ impl Config {
             ),
         ] {
             if !value.is_finite() || value < low || value > high {
-                problems.push(format!("{name} 必须在 {low}~{high} 之间，当前为 {value}"));
+                problems.push(format!(
+                    "{name} must be between {low} and {high}, currently {value}"
+                ));
             }
         }
 
         if self.retry_attempts < 1 || self.retry_attempts > 10 {
             problems.push(format!(
-                "retry_attempts 必须在 1~10 之间，当前为 {}",
+                "retry_attempts must be between 1 and 10, currently {}",
                 self.retry_attempts
             ));
         }
@@ -416,14 +429,16 @@ impl Config {
             ),
         ] {
             if value < low || value > high {
-                problems.push(format!("{name} 必须在 {low}~{high} 之间，当前为 {value}"));
+                problems.push(format!(
+                    "{name} must be between {low} and {high}, currently {value}"
+                ));
             }
         }
 
         match self.log_level.to_ascii_uppercase().as_str() {
             "ERROR" | "WARN" | "WARNING" | "INFO" | "DEBUG" => {}
             other => problems.push(format!(
-                "log_level 必须是 ERROR/WARN/INFO/DEBUG，当前为 {other}"
+                "log_level must be ERROR/WARN/INFO/DEBUG, currently {other}"
             )),
         }
 
@@ -619,14 +634,19 @@ impl Config {
     pub fn save(&self, path: &Path) -> Result<()> {
         let text = self.to_conf();
         let parent = path.parent().unwrap_or_else(|| Path::new("."));
-        fs::create_dir_all(parent)
-            .map_err(|err| Error::config(format!("无法创建目录 {}: {err}", parent.display())))?;
+        fs::create_dir_all(parent).map_err(|err| {
+            Error::config(format!(
+                "cannot create directory {}: {err}",
+                parent.display()
+            ))
+        })?;
         let tmp = parent.join(format!(".automountd.conf.{}.tmp", std::process::id()));
         {
             let mut file = fs::File::create(&tmp)
-                .map_err(|err| Error::config(format!("无法写入 {}: {err}", tmp.display())))?;
-            file.write_all(text.as_bytes())
-                .map_err(|err| Error::config(format!("写入 {} 失败: {err}", tmp.display())))?;
+                .map_err(|err| Error::config(format!("cannot write {}: {err}", tmp.display())))?;
+            file.write_all(text.as_bytes()).map_err(|err| {
+                Error::config(format!("failed to write {}: {err}", tmp.display()))
+            })?;
             file.flush().ok();
         }
         #[cfg(unix)]
@@ -636,7 +656,7 @@ impl Config {
         }
         fs::rename(&tmp, path).map_err(|err| {
             let _ = fs::remove_file(&tmp);
-            Error::config(format!("替换 {} 失败: {err}", path.display()))
+            Error::config(format!("failed to replace {}: {err}", path.display()))
         })?;
         Ok(())
     }
@@ -659,7 +679,10 @@ fn check_absolute(problems: &mut Vec<String>, name: &str, path: &Path) {
     // on Linux a leading `/` is enough.
     let looks_absolute = path.is_absolute() || path.to_string_lossy().starts_with('/');
     if !looks_absolute {
-        problems.push(format!("{name} 必须是绝对路径，当前为 {}", path.display()));
+        problems.push(format!(
+            "{name} must be an absolute path, currently {}",
+            path.display()
+        ));
     }
 }
 
@@ -779,7 +802,7 @@ fn parse_bool(value: &str, key: &str, line: usize) -> Result<bool> {
         "true" | "yes" | "on" | "1" => Ok(true),
         "false" | "no" | "off" | "0" => Ok(false),
         other => Err(Error::config(format!(
-            "第 {line} 行：{key} 需要布尔值（true/false），当前为 {other}"
+            "line {line}: {key} needs a boolean value (true/false), currently {other}"
         ))),
     }
 }
@@ -791,7 +814,7 @@ where
 {
     value.trim().parse::<T>().map_err(|err| {
         Error::config(format!(
-            "第 {line} 行：{key} 数值无效（{err}），当前为 {value}"
+            "line {line}: {key} has an invalid number ({err}), currently {value}"
         ))
     })
 }
@@ -845,13 +868,13 @@ exfat = uid={uid}
     fn comments_respect_quotes() {
         let config = Config::parse(
             r#"
-mount_root = "/media#1"  # 行内注释
-blocked_labels = "备份 # 盘", 旧盘
+mount_root = "/media#1"  # inline comment
+blocked_labels = "backup # disk", old-disk
 "#,
         )
         .unwrap();
         assert_eq!(config.mount_root, PathBuf::from("/media#1"));
-        assert_eq!(config.blocked_labels, vec!["备份 # 盘", "旧盘"]);
+        assert_eq!(config.blocked_labels, vec!["backup # disk", "old-disk"]);
     }
 
     #[test]

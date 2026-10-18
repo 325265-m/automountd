@@ -144,7 +144,7 @@ pub fn load_fstab(path: &Path) -> Result<Vec<FstabEntry>> {
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
         Err(err) => Err(Error::new(
             ErrorKind::Io,
-            format!("无法读取 {}: {err}", path.display()),
+            format!("failed to read {}: {err}", path.display()),
         )),
     }
 }
@@ -174,17 +174,17 @@ pub fn add_entry(path: &Path, entry: &FstabEntry) -> Result<(bool, String)> {
         return Ok((
             false,
             format!(
-                "fstab 中已存在 {} 的记录（挂载点 {}），无需重复添加",
+                "fstab already has an entry for {} (mount point {}), no need to add it again",
                 entry.source, existing.target
             ),
         ));
     }
     if let Some(existing) = find_entry(&entries, None, Some(&entry.target)) {
         return Err(Error::config(format!(
-            "挂载点 {} 已被 fstab 中的 {} 占用",
+            "mount point {} is already taken by {} in fstab",
             existing.target, existing.source
         ))
-        .with_hint("请先删除冲突条目，或改用其他挂载点"));
+        .with_hint("Remove the conflicting entry first, or use another mount point"));
     }
 
     let mut merged = entry.clone();
@@ -203,7 +203,7 @@ pub fn add_entry(path: &Path, entry: &FstabEntry) -> Result<(bool, String)> {
     Ok((
         true,
         format!(
-            "已写入 {}: {} -> {}（选项 {}）",
+            "wrote {}: {} -> {} (options {})",
             path.display(),
             merged.source,
             merged.target,
@@ -219,11 +219,14 @@ pub fn remove_entry(
     target: Option<&str>,
 ) -> Result<(bool, String)> {
     if source.is_none() && target.is_none() {
-        return Ok((false, "未指定要删除的设备或挂载点".to_string()));
+        return Ok((
+            false,
+            "no device or mount point specified for removal".to_string(),
+        ));
     }
     for value in [source, target].into_iter().flatten() {
         if value.contains('\n') || value.contains('\r') {
-            return Err(Error::config("fstab 字段不能包含换行符"));
+            return Err(Error::config("fstab fields must not contain newlines"));
         }
     }
     let resolved = resolve_target(path);
@@ -241,7 +244,7 @@ pub fn remove_entry(
             (None, Some(target)) => target.to_string(),
             (None, None) => String::new(),
         };
-        return Ok((false, format!("fstab 中没有匹配 {wanted} 的记录")));
+        return Ok((false, format!("no fstab entry matches {wanted}")));
     }
 
     let removed_lines: Vec<usize> = matched.iter().map(|entry| entry.line_no).collect();
@@ -259,7 +262,7 @@ pub fn remove_entry(
     Ok((
         true,
         format!(
-            "已从 fstab 删除 {} 条记录（{}）",
+            "removed {} entries from fstab ({})",
             removed_lines.len(),
             matched
                 .iter()
@@ -338,7 +341,7 @@ fn read_or_empty(path: &Path) -> Result<String> {
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(String::new()),
         Err(err) => Err(Error::new(
             ErrorKind::Io,
-            format!("无法读取 {}: {err}", path.display()),
+            format!("failed to read {}: {err}", path.display()),
         )),
     }
 }
@@ -371,7 +374,7 @@ fn backup_file(path: &Path) -> Result<()> {
         Error::new(
             ErrorKind::Io,
             format!(
-                "备份 {} 到 {} 失败: {err}",
+                "failed to back up {} to {}: {err}",
                 path.display(),
                 backup.display()
             ),
@@ -390,15 +393,19 @@ fn validate_entry(entry: &FstabEntry) -> Result<()> {
         ("passno", entry.passno.as_str()),
     ] {
         if value.contains('\n') || value.contains('\r') {
-            return Err(Error::config(format!("fstab 字段 {name} 不能包含换行符")));
+            return Err(Error::config(format!(
+                "fstab field {name} must not contain newlines"
+            )));
         }
     }
     if entry.target.is_empty() || entry.source.is_empty() {
-        return Err(Error::config("fstab 的 source/target 不能为空"));
+        return Err(Error::config("fstab source/target must not be empty"));
     }
     for option in &entry.options {
         if option.contains('\n') || option.contains('\r') {
-            return Err(Error::config("fstab 挂载选项不能包含换行符"));
+            return Err(Error::config(
+                "fstab mount options must not contain newlines",
+            ));
         }
     }
     Ok(())
@@ -418,7 +425,7 @@ fn write_atomic(path: &Path, text: &str) -> Result<()> {
     fs::create_dir_all(&parent).map_err(|err| {
         Error::new(
             ErrorKind::Io,
-            format!("无法创建目录 {}: {err}", parent.display()),
+            format!("failed to create directory {}: {err}", parent.display()),
         )
     })?;
     let tmp = parent.join(format!(
@@ -430,21 +437,21 @@ fn write_atomic(path: &Path, text: &str) -> Result<()> {
         let mut file = fs::File::create(&tmp).map_err(|err| {
             Error::new(
                 ErrorKind::Io,
-                format!("无法写入临时文件 {}: {err}", tmp.display()),
+                format!("failed to write temporary file {}: {err}", tmp.display()),
             )
         })?;
         if let Err(err) = file.write_all(text.as_bytes()) {
             let _ = fs::remove_file(&tmp);
             return Err(Error::new(
                 ErrorKind::Io,
-                format!("写入 {} 失败: {err}", tmp.display()),
+                format!("failed to write {}: {err}", tmp.display()),
             ));
         }
         if let Err(err) = file.sync_all() {
             let _ = fs::remove_file(&tmp);
             return Err(Error::new(
                 ErrorKind::Io,
-                format!("同步 {} 失败: {err}", tmp.display()),
+                format!("failed to sync {}: {err}", tmp.display()),
             ));
         }
     }
@@ -459,7 +466,10 @@ fn write_atomic(path: &Path, text: &str) -> Result<()> {
         let _ = fs::set_permissions(&tmp, fs::Permissions::from_mode(mode));
         if let Some(meta) = metadata {
             if let Err(err) = crate::platform::chown(&tmp, meta.uid(), meta.gid()) {
-                crate::logging::warn(format!("恢复 {} 的属主失败: {err}", tmp.display()));
+                crate::logging::warn(format!(
+                    "failed to restore ownership of {}: {err}",
+                    tmp.display()
+                ));
             }
         }
     }
@@ -467,7 +477,7 @@ fn write_atomic(path: &Path, text: &str) -> Result<()> {
         let _ = fs::remove_file(&tmp);
         Error::new(
             ErrorKind::Io,
-            format!("替换 {} 失败: {err}", path.display()),
+            format!("failed to replace {}: {err}", path.display()),
         )
     })?;
     Ok(())
@@ -493,7 +503,7 @@ mod tests {
 
     #[test]
     fn splits_fields_and_keeps_escapes() {
-        let fields = split_fields("UUID=1234-ABCD /media/My\\040Disk exfat defaults 0 0 # 注释");
+        let fields = split_fields("UUID=1234-ABCD /media/My\\040Disk exfat defaults 0 0 # comment");
         assert_eq!(
             fields,
             vec![
@@ -506,7 +516,7 @@ mod tests {
             ]
         );
         assert_eq!(mountinfo::unescape(&fields[1]), "/media/My Disk");
-        assert!(split_fields("   # 整行注释").is_empty());
+        assert!(split_fields("   # whole-line comment").is_empty());
         assert_eq!(split_fields("a\\tb c"), vec!["a\\tb", "c"]);
     }
 
@@ -516,7 +526,7 @@ mod tests {
             "# /etc/fstab\n",
             "UUID=1111-2222 /media/My\\040Disk exfat defaults,nofail 0 2\n",
             "\n",
-            "不完整的一行\n",
+            "incomplete line\n",
             "# LABEL=old /mnt/old ext4 defaults 0 0\n",
         );
         let entries = parse_fstab(text);
@@ -538,11 +548,15 @@ mod tests {
         assert_eq!(escape_field("a\tb"), "a\\011b");
         assert_eq!(escape_field("a\\b"), "a\\\\b");
 
-        let entry = sample_entry("UUID=ABCD-1234", "/media/备份 盘", &["defaults", "nofail"]);
+        let entry = sample_entry(
+            "UUID=ABCD-1234",
+            "/media/Café Disk",
+            &["defaults", "nofail"],
+        );
         let line = entry.to_line();
         let parsed = parse_fstab(&line);
         assert_eq!(parsed.len(), 1);
-        assert_eq!(parsed[0].target, "/media/备份 盘");
+        assert_eq!(parsed[0].target, "/media/Café Disk");
         assert_eq!(parsed[0].source, entry.source);
         assert_eq!(parsed[0].options, entry.options);
     }
@@ -561,15 +575,15 @@ mod tests {
     fn adds_entry_idempotently_with_backup() {
         let dir = TempDir::new("fstab-add");
         let path = dir.join("fstab");
-        std::fs::write(&path, "# 现有 fstab\nUUID=AAAA / ext4 defaults 0 1").unwrap();
+        std::fs::write(&path, "# existing fstab\nUUID=AAAA / ext4 defaults 0 1").unwrap();
 
         let entry = sample_entry("UUID=1234-ABCD", "/media/My Disk", &["uid=1000"]);
         let (changed, message) = add_entry(&path, &entry).unwrap();
         assert!(changed, "{message}");
-        assert!(message.contains("已写入"));
+        assert!(message.contains("wrote"));
 
         let text = std::fs::read_to_string(&path).unwrap();
-        assert!(text.ends_with('\n'), "补换行失败: {text:?}");
+        assert!(text.ends_with('\n'), "missing trailing newline: {text:?}");
         assert!(text.contains("UUID=AAAA / ext4 defaults 0 1\n"));
         let entries = parse_fstab(&text);
         assert_eq!(entries.len(), 2);
@@ -581,7 +595,7 @@ mod tests {
         assert_eq!(added.options[0], "uid=1000");
 
         let backup = dir.join("fstab.automountd.bak");
-        assert!(backup.is_file(), "未生成备份文件");
+        assert!(backup.is_file(), "backup file was not created");
         assert!(std::fs::read_to_string(&backup)
             .unwrap()
             .contains("UUID=AAAA"));
@@ -589,7 +603,7 @@ mod tests {
         // a second add must be idempotent
         let (changed, message) = add_entry(&path, &entry).unwrap();
         assert!(!changed);
-        assert!(message.contains("已存在"));
+        assert!(message.contains("already has an entry"));
         assert_eq!(
             parse_fstab(&std::fs::read_to_string(&path).unwrap()).len(),
             2
@@ -603,7 +617,7 @@ mod tests {
         let entry = sample_entry("UUID=BBBB", "/media/same", &[]);
         let err = add_entry(&path, &entry).unwrap_err();
         assert_eq!(err.kind, ErrorKind::Config);
-        assert!(err.message.contains("已被 fstab 中的"), "{}", err.message);
+        assert!(err.message.contains("already taken by"), "{}", err.message);
     }
 
     #[test]
@@ -612,7 +626,7 @@ mod tests {
         let path = dir.write(
             "fstab",
             concat!(
-                "# 头部注释\n",
+                "# header comment\n",
                 "UUID=AAAA / ext4 defaults 0 1\n",
                 "UUID=1234-ABCD /media/My\\040Disk exfat defaults 0 0\n",
                 "UUID=BBBB /media/other exfat defaults 0 0\n",
@@ -634,7 +648,7 @@ mod tests {
 
         let (removed, message) = remove_entry(&path, Some("UUID=FFFF"), None).unwrap();
         assert!(!removed);
-        assert!(message.contains("没有匹配"));
+        assert!(message.contains("no fstab entry matches"));
     }
 
     #[test]

@@ -109,23 +109,25 @@ impl CtlRequest {
     pub fn decode(line: &str) -> Result<Self> {
         let line = line.trim_end_matches(['\r', '\n']);
         if line.is_empty() {
-            return Err(Error::protocol("控制请求为空")
-                .with_hint("客户端与服务端版本可能不一致，请升级 automountd"));
+            return Err(Error::protocol("control request is empty")
+                .with_hint("the client and server versions may differ; upgrade automountd"));
         }
         let fields: Vec<&str> = line.split('\t').collect();
         let version = fields[0].trim();
         if version != PROTOCOL_VERSION {
             return Err(Error::protocol(format!(
-                "不支持的控制协议版本 '{version}'（期望 {PROTOCOL_VERSION}）"
+                "unsupported control protocol version '{version}' (expected {PROTOCOL_VERSION})"
             ))
-            .with_hint("请确保 automountd 服务与命令行工具版本一致"));
+            .with_hint("make sure the automountd service and the CLI tool are the same version"));
         }
         let command = fields
             .get(1)
             .map(|field| decode_field(field))
             .unwrap_or_default();
         if command.trim().is_empty() {
-            return Err(Error::protocol("控制请求缺少命令名"));
+            return Err(Error::protocol(
+                "control request is missing the command name",
+            ));
         }
         let args = fields
             .iter()
@@ -213,8 +215,10 @@ impl CtlResponse {
                 Some(line) if line.trim().is_empty() => continue,
                 Some(line) => break line,
                 None => {
-                    return Err(Error::protocol("控制接口返回空响应")
-                        .with_hint("守护进程可能已退出，请查看服务日志"))
+                    return Err(
+                        Error::protocol("control interface returned an empty response")
+                            .with_hint("the daemon may have exited; check the service logs"),
+                    )
                 }
             }
         };
@@ -255,8 +259,10 @@ impl CtlResponse {
                     ..Default::default()
                 })
             }
-            other => Err(Error::protocol(format!("无法识别的控制响应: {other}"))
-                .with_hint("请升级 automountd 客户端与服务端到同一版本")),
+            other => Err(
+                Error::protocol(format!("unrecognized control response: {other}"))
+                    .with_hint("upgrade the automountd client and server to the same version"),
+            ),
         }
     }
 }
@@ -313,8 +319,12 @@ impl CtlServer {
         #[cfg(not(unix))]
         {
             Err(
-                Error::unsupported("当前平台不支持控制接口（automountd 仅支持 Linux/Unix）")
-                    .with_hint("请在 Linux 上运行本程序；Windows 上仅可用于开发与 dry-run 测试"),
+                Error::unsupported(
+                    "the control interface is not supported on this platform (automountd only supports Linux/Unix)",
+                )
+                .with_hint(
+                    "run this program on Linux; Windows is only supported for development and dry-run testing",
+                ),
             )
         }
     }
@@ -325,17 +335,19 @@ impl CtlServer {
 
         if self.handle.is_some() {
             return Err(Error::config(format!(
-                "控制接口已在 {} 上运行",
+                "control interface is already running on {}",
                 self.path.display()
             )));
         }
         let path_len = self.path.as_os_str().len();
         if path_len > MAX_SOCKET_PATH {
             return Err(Error::config(format!(
-                "控制 socket 路径过长（{path_len} 字节，上限 {MAX_SOCKET_PATH}）: {}",
+                "control socket path is too long ({path_len} bytes, limit {MAX_SOCKET_PATH}): {}",
                 self.path.display()
             ))
-            .with_hint("请把 ctl_socket 改到更短的目录，例如 /run/automountd/control.sock"));
+            .with_hint(
+                "move ctl_socket to a shorter directory, e.g. /run/automountd/control.sock",
+            ));
         }
         if let Some(parent) = self.path.parent() {
             if !parent.as_os_str().is_empty() {
@@ -343,9 +355,12 @@ impl CtlServer {
                     std::fs::create_dir_all(parent).map_err(|err| {
                         Error::new(
                             ErrorKind::Io,
-                            format!("无法创建控制 socket 目录 {}: {err}", parent.display()),
+                            format!(
+                                "failed to create control socket directory {}: {err}",
+                                parent.display()
+                            ),
                         )
-                        .with_hint("请确认当前用户对上级目录有写权限")
+                        .with_hint("make sure the current user can write to the parent directory")
                     })?;
                     let _ =
                         std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o755));
@@ -358,25 +373,34 @@ impl CtlServer {
         if self.path.exists() {
             if std::os::unix::net::UnixStream::connect(&self.path).is_ok() {
                 return Err(Error::config(format!(
-                    "控制 socket {} 上已有守护进程在监听",
+                    "a daemon is already listening on control socket {}",
                     self.path.display()
                 ))
-                .with_hint("请先停止已有实例: sudo systemctl stop automountd"));
+                .with_hint("stop the existing instance first: sudo systemctl stop automountd"));
             }
             std::fs::remove_file(&self.path).map_err(|err| {
                 Error::new(
                     ErrorKind::Io,
-                    format!("无法删除陈旧的控制 socket {}: {err}", self.path.display()),
+                    format!(
+                        "failed to remove stale control socket {}: {err}",
+                        self.path.display()
+                    ),
                 )
             })?;
-            crate::logging::debug(format!("已清理陈旧的控制 socket {}", self.path.display()));
+            crate::logging::debug(format!(
+                "removed stale control socket {}",
+                self.path.display()
+            ));
         }
         let listener = std::os::unix::net::UnixListener::bind(&self.path).map_err(|err| {
             Error::new(
                 ErrorKind::Io,
-                format!("无法创建控制 socket {}: {err}", self.path.display()),
+                format!(
+                    "failed to create control socket {}: {err}",
+                    self.path.display()
+                ),
             )
-            .with_hint("请确认目录存在，且没有其他 automountd 实例在运行")
+            .with_hint("make sure the directory exists and no other automountd instance is running")
         })?;
         // Let regular users connect; the real permission check is done by
         // ctl_allowed_users + peer_uid.
@@ -384,12 +408,15 @@ impl CtlServer {
         listener.set_nonblocking(true).map_err(|err| {
             Error::new(
                 ErrorKind::Io,
-                format!("无法把控制 socket 设为非阻塞: {err}"),
+                format!("failed to set the control socket non-blocking: {err}"),
             )
         })?;
-        let worker = listener
-            .try_clone()
-            .map_err(|err| Error::new(ErrorKind::Io, format!("无法复制控制 socket 句柄: {err}")))?;
+        let worker = listener.try_clone().map_err(|err| {
+            Error::new(
+                ErrorKind::Io,
+                format!("failed to duplicate the control socket handle: {err}"),
+            )
+        })?;
         self.listener = Some(listener);
         // After stop(), start() may be called again.
         self.stop.store(false, Ordering::SeqCst);
@@ -403,7 +430,9 @@ impl CtlServer {
                 match worker.accept() {
                     Ok((stream, _addr)) => {
                         if active.load(Ordering::SeqCst) >= MAX_CONNECTIONS {
-                            crate::logging::warn("控制接口连接数已达上限，拒绝新连接");
+                            crate::logging::warn(
+                                "control interface connection limit reached; rejecting new connection",
+                            );
                             drop(stream);
                             continue;
                         }
@@ -422,7 +451,9 @@ impl CtlServer {
                             });
                         if let Err(err) = spawned {
                             active.fetch_sub(1, Ordering::SeqCst);
-                            crate::logging::error(format!("无法创建控制连接线程: {err}"));
+                            crate::logging::error(format!(
+                                "failed to create control connection thread: {err}"
+                            ));
                         }
                     }
                     Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {
@@ -430,14 +461,16 @@ impl CtlServer {
                     }
                     Err(err) if err.kind() == std::io::ErrorKind::Interrupted => {}
                     Err(err) => {
-                        crate::logging::error(format!("控制 socket 接受连接失败: {err}"));
+                        crate::logging::error(format!(
+                            "failed to accept connection on the control socket: {err}"
+                        ));
                         std::thread::sleep(Duration::from_millis(200));
                     }
                 }
             }
         });
         self.handle = Some(handle);
-        crate::logging::info(format!("控制接口已就绪: {}", self.path.display()));
+        crate::logging::info(format!("control interface ready: {}", self.path.display()));
         Ok(())
     }
 
@@ -519,16 +552,18 @@ fn peer_uid(stream: &std::os::unix::net::UnixStream) -> Result<u32> {
             return Err(Error::new(
                 ErrorKind::Permission,
                 format!(
-                    "无法读取控制连接的对端身份: {}",
+                    "failed to read the peer credentials of the control connection: {}",
                     std::io::Error::last_os_error()
                 ),
             )
-            .with_hint("出于安全考虑已拒绝该连接，请检查内核/沙箱配置"));
+            .with_hint(
+                "the connection was rejected for security; check the kernel/sandbox configuration",
+            ));
         }
         if len as usize != std::mem::size_of::<UCred>() {
             return Err(Error::new(
                 ErrorKind::Permission,
-                "控制连接的对端身份信息不完整",
+                "peer credentials of the control connection are incomplete",
             ));
         }
         Ok(cred.uid)
@@ -536,10 +571,11 @@ fn peer_uid(stream: &std::os::unix::net::UnixStream) -> Result<u32> {
     #[cfg(all(unix, not(target_os = "linux")))]
     {
         let _ = stream;
-        Err(
-            Error::new(ErrorKind::Permission, "当前平台无法校验控制连接身份")
-                .with_hint("automountd 控制接口只在 Linux 上启用"),
+        Err(Error::new(
+            ErrorKind::Permission,
+            "cannot verify control connection credentials on this platform",
         )
+        .with_hint("the automountd control interface is only enabled on Linux"))
     }
 }
 
@@ -562,7 +598,7 @@ fn handle_connection(
         text.push_str(END_MARKER);
         text.push('\n');
         if let Err(err) = stream.write_all(text.as_bytes()) {
-            crate::logging::warn(format!("写回控制响应失败: {err}"));
+            crate::logging::warn(format!("failed to write the control response: {err}"));
         }
         let _ = stream.flush();
     };
@@ -581,7 +617,9 @@ fn handle_connection(
     let reader_stream = match stream.try_clone() {
         Ok(handle) => handle,
         Err(err) => {
-            crate::logging::warn(format!("无法复制控制连接句柄: {err}"));
+            crate::logging::warn(format!(
+                "failed to duplicate the control connection handle: {err}"
+            ));
             return;
         }
     };
@@ -593,13 +631,16 @@ fn handle_connection(
         Ok(0) => return,
         Ok(_) => {
             if !line.ends_with('\n') {
-                CtlResponse::failure("protocol", "控制请求过长或缺少换行（上限 64 KiB）")
+                CtlResponse::failure(
+                    "protocol",
+                    "control request is too long or missing a newline (limit 64 KiB)",
+                )
             } else {
                 let trimmed = line.trim_end_matches(['\r', '\n']);
                 match CtlRequest::decode(trimmed) {
                     Ok(request) => {
                         crate::logging::debug(format!(
-                            "收到控制请求: {} {:?}（uid={uid}）",
+                            "received control request: {} {:?} (uid={uid})",
                             request.command, request.args
                         ));
                         let (reply, receiver) = std::sync::mpsc::channel();
@@ -608,15 +649,17 @@ fn handle_connection(
                             peer_uid: uid,
                             reply,
                         }) {
-                            crate::logging::error(format!("无法把控制请求转交主循环: {err}"));
-                            CtlResponse::failure("not-running", "守护进程主循环已退出")
+                            crate::logging::error(format!(
+                                "failed to hand the control request to the main loop: {err}"
+                            ));
+                            CtlResponse::failure("not-running", "the daemon main loop has exited")
                         } else {
                             match receiver.recv_timeout(job_timeout) {
                                 Ok(response) => response,
                                 Err(_) => CtlResponse::failure(
                                     "timeout",
                                     &format!(
-                                        "等待守护进程处理请求超时（{} 秒）；操作可能仍在进行，请用 status 确认",
+                                        "timed out waiting for the daemon to handle the request ({}s); the operation may still be running, check with status",
                                         job_timeout.as_secs()
                                     ),
                                 ),
@@ -628,7 +671,7 @@ fn handle_connection(
             }
         }
         Err(err) => {
-            crate::logging::warn(format!("读取控制请求失败: {err}"));
+            crate::logging::warn(format!("failed to read the control request: {err}"));
             return;
         }
     };
@@ -655,20 +698,20 @@ fn connect_with_timeout(
         Ok(Err(err)) => Err(Error::new(
             ErrorKind::NotRunning,
             format!(
-                "无法连接 automountd 控制 socket {}: {err}",
+                "failed to connect to the automountd control socket {}: {err}",
                 socket.display()
             ),
         )
-        .with_hint("请先启动服务: sudo systemctl start automountd")),
+        .with_hint("start the service first: sudo systemctl start automountd")),
         Err(_) => Err(Error::new(
             ErrorKind::NotRunning,
             format!(
-                "连接 automountd 控制 socket {} 超时（{} 秒）",
+                "timed out connecting to the automountd control socket {} ({}s)",
                 socket.display(),
                 timeout.as_secs_f32().max(0.1)
             ),
         )
-        .with_hint("守护进程可能正在启动，请稍后重试")),
+        .with_hint("the daemon may be starting; try again later")),
     }
 }
 
@@ -680,8 +723,8 @@ fn read_response_text<R: std::io::BufRead>(reader: &mut R) -> Result<String> {
     loop {
         line.clear();
         let read = reader.read_line(&mut line).map_err(|err| {
-            Error::protocol(format!("读取控制响应失败: {err}"))
-                .with_hint("守护进程可能已退出或响应超时")
+            Error::protocol(format!("failed to read the control response: {err}"))
+                .with_hint("the daemon may have exited or the response timed out")
         })?;
         if read == 0 {
             break;
@@ -690,12 +733,16 @@ fn read_response_text<R: std::io::BufRead>(reader: &mut R) -> Result<String> {
             break;
         }
         if text.len() + line.len() > MAX_RESPONSE_BYTES {
-            return Err(Error::protocol("控制接口响应过大，已中止"));
+            return Err(Error::protocol(
+                "control interface response is too large; aborted",
+            ));
         }
         text.push_str(&line);
     }
     if text.trim().is_empty() {
-        return Err(Error::protocol("控制接口返回空响应"));
+        return Err(Error::protocol(
+            "control interface returned an empty response",
+        ));
     }
     Ok(text)
 }
@@ -710,17 +757,17 @@ pub fn request(socket: &Path, request: &CtlRequest, timeout: Duration) -> Result
         let _ = stream.set_read_timeout(Some(timeout));
         let _ = stream.set_write_timeout(Some(timeout));
 
-        let mut writer = stream
-            .try_clone()
-            .map_err(|err| Error::protocol(format!("无法复制控制连接: {err}")))?;
+        let mut writer = stream.try_clone().map_err(|err| {
+            Error::protocol(format!("failed to duplicate the control connection: {err}"))
+        })?;
         let mut line = request.encode();
         line.push('\n');
         writer
             .write_all(line.as_bytes())
             .and_then(|_| writer.flush())
             .map_err(|err| {
-                Error::protocol(format!("发送控制请求失败: {err}"))
-                    .with_hint("守护进程可能已退出，请检查服务状态")
+                Error::protocol(format!("failed to send the control request: {err}"))
+                    .with_hint("the daemon may have exited; check the service status")
             })?;
 
         let mut reader = BufReader::new(stream);
@@ -732,10 +779,11 @@ pub fn request(socket: &Path, request: &CtlRequest, timeout: Duration) -> Result
     #[cfg(not(unix))]
     {
         let _ = (socket, request, timeout);
-        Err(
-            Error::new(ErrorKind::NotRunning, "当前平台不支持 Unix socket 控制接口")
-                .with_hint("automountd 的控制接口只在 Linux 上可用"),
+        Err(Error::new(
+            ErrorKind::NotRunning,
+            "the Unix socket control interface is not supported on this platform",
         )
+        .with_hint("the automountd control interface is only available on Linux"))
     }
 }
 
@@ -763,14 +811,14 @@ mod tests {
 
     #[test]
     fn reads_multiline_response_and_end_marker() {
-        let text = "OK\nM\tcount\t2\nR\t/dev/sdb1\tU 盘\nR\t/dev/sdc1\t100%\nEND\n";
+        let text = "OK\nM\tcount\t2\nR\t/dev/sdb1\tUSB Disk\nR\t/dev/sdc1\t100%\nEND\n";
         let mut cursor = std::io::Cursor::new(text.as_bytes());
         let body = read_response_text(&mut cursor).unwrap();
         assert!(body.contains("R\t/dev/sdb1"));
         let response = CtlResponse::decode(&body).unwrap();
         assert_eq!(response.meta_value("count"), Some("2"));
         assert_eq!(response.rows.len(), 2);
-        assert_eq!(response.rows[0][1], "U 盘");
+        assert_eq!(response.rows[0][1], "USB Disk");
     }
 
     #[test]
@@ -791,29 +839,32 @@ mod tests {
     fn request_encode_decode_roundtrip() {
         let request = CtlRequest::new("mount")
             .arg("/dev/sdb1")
-            .arg("卷标\t带制表符")
-            .arg("多行\n内容")
-            .arg("100% 完成");
+            .arg("label\twith tab")
+            .arg("multi-line\ncontent")
+            .arg("100% done");
         let encoded = request.encode();
         assert!(encoded.starts_with("1\tmount\t"));
-        assert!(!encoded.contains('\n'), "编码后不能含换行: {encoded}");
+        assert!(
+            !encoded.contains('\n'),
+            "encoded text must not contain newlines: {encoded}"
+        );
         // A TAB inside a field must be escaped, so no extra fields appear
         // (version + command + 4 args)
         assert_eq!(encoded.split('\t').count(), 6);
         let decoded = CtlRequest::decode(&encoded).unwrap();
         assert_eq!(decoded, request);
-        assert_eq!(decoded.args[1], "卷标\t带制表符");
-        assert_eq!(decoded.args[2], "多行\n内容");
+        assert_eq!(decoded.args[1], "label\twith tab");
+        assert_eq!(decoded.args[2], "multi-line\ncontent");
     }
 
     #[test]
     fn request_decode_rejects_bad_input() {
         let err = CtlRequest::decode("2\tlist").unwrap_err();
         assert_eq!(err.kind, ErrorKind::Protocol);
-        assert!(err.message.contains("协议版本"));
+        assert!(err.message.contains("protocol version"));
 
         let err = CtlRequest::decode("1\t\t").unwrap_err();
-        assert!(err.message.contains("命令名"));
+        assert!(err.message.contains("command name"));
 
         assert!(CtlRequest::decode("").is_err());
         // A trailing newline must be tolerated (the socket is read line by line)
@@ -827,8 +878,8 @@ mod tests {
     fn response_encode_decode_roundtrip() {
         let response = CtlResponse::success()
             .with_meta("count", "2")
-            .with_meta("说明", "制表\t与换行\n都在这里")
-            .with_row(vec!["/dev/sdb1".to_string(), "U 盘\tA".to_string()])
+            .with_meta("note", "tab\tand newline\nare all here")
+            .with_row(vec!["/dev/sdb1".to_string(), "USB Disk\tA".to_string()])
             .with_row(vec!["/dev/sdc1".to_string(), "100%".to_string()]);
         let text = response.encode();
         let lines: Vec<&str> = text.lines().collect();
@@ -836,7 +887,10 @@ mod tests {
         assert_eq!(lines.len(), 5);
         let decoded = CtlResponse::decode(&text).unwrap();
         assert_eq!(decoded, response);
-        assert_eq!(decoded.meta_value("说明"), Some("制表\t与换行\n都在这里"));
+        assert_eq!(
+            decoded.meta_value("note"),
+            Some("tab\tand newline\nare all here")
+        );
         assert_eq!(decoded.rows[1][1], "100%");
 
         // Empty response body
@@ -845,7 +899,7 @@ mod tests {
             CtlResponse::success()
         );
         // Unknown lines are ignored, keeping room for future extensions
-        let decoded = CtlResponse::decode("OK\nX\t扩展\t数据\nM\tk\tv\n").unwrap();
+        let decoded = CtlResponse::decode("OK\nX\textra\tdata\nM\tk\tv\n").unwrap();
         assert_eq!(decoded.meta_value("k"), Some("v"));
         assert!(decoded.rows.is_empty());
         // Blank lines (e.g. one extra trailing newline) must be ignored too
@@ -854,14 +908,14 @@ mod tests {
 
     #[test]
     fn error_response_roundtrip() {
-        let response = CtlResponse::failure("permission", "需要 root 权限\t请用 sudo");
+        let response = CtlResponse::failure("permission", "root privileges required\tuse sudo");
         let text = response.encode();
         assert!(text.starts_with("ERR\tpermission\t"));
         assert!(!text.contains('\n'));
         let decoded = CtlResponse::decode(&text).unwrap();
         assert!(!decoded.ok);
         assert_eq!(decoded.code, "permission");
-        assert_eq!(decoded.message, "需要 root 权限\t请用 sudo");
+        assert_eq!(decoded.message, "root privileges required\tuse sudo");
         assert!(decoded.meta.is_empty() && decoded.rows.is_empty());
 
         // Unrecognised response header
@@ -871,7 +925,7 @@ mod tests {
 
     #[test]
     fn percent_escapes_roundtrip() {
-        for text in ["100%", "%25", "a\tb\nc\rd", "%zz 非法", "中文 卷标%"] {
+        for text in ["100%", "%25", "a\tb\nc\rd", "%zz invalid", "naïve label%"] {
             assert_eq!(decode_field(&encode_field(text)), text);
         }
         assert_eq!(encode_field("100%"), "100%25");
@@ -904,22 +958,24 @@ mod tests {
         config.ctl_socket = temp.join("control.sock");
         let (jobs, receiver) = std::sync::mpsc::channel::<CtlJob>();
         let mut server = CtlServer::new(&config, jobs);
-        server.start().expect("启动控制接口失败");
+        server
+            .start()
+            .expect("failed to start the control interface");
         assert!(is_running(&config.ctl_socket));
 
         let waiter = std::thread::spawn(move || {
             let job = receiver
                 .recv_timeout(Duration::from_secs(5))
-                .expect("没有收到控制请求");
+                .expect("no control request received");
             assert_eq!(job.request.command, "list");
             assert_eq!(job.request.args, vec!["--all".to_string()]);
             job.reply
                 .send(
                     CtlResponse::success()
                         .with_meta("count", "1")
-                        .with_row(vec!["sdb1".to_string(), "U 盘\tA".to_string()]),
+                        .with_row(vec!["sdb1".to_string(), "USB Disk\tA".to_string()]),
                 )
-                .expect("回写响应失败");
+                .expect("failed to send the response");
         });
 
         let response = request(
@@ -927,11 +983,11 @@ mod tests {
             &CtlRequest::new("list").arg("--all"),
             Duration::from_secs(5),
         )
-        .expect("控制请求失败");
+        .expect("control request failed");
         assert!(response.ok, "{}", response.message);
         assert_eq!(response.meta_value("count"), Some("1"));
         assert_eq!(response.rows.len(), 1);
-        assert_eq!(response.rows[0][1], "U 盘\tA");
+        assert_eq!(response.rows[0][1], "USB Disk\tA");
         waiter.join().unwrap();
 
         // The server rejects the invalid request but must not block
@@ -940,10 +996,16 @@ mod tests {
             &CtlRequest::new("status"),
             Duration::from_secs(5),
         );
-        assert!(bad.is_ok(), "第二个请求也应收到协议层回复");
+        assert!(
+            bad.is_ok(),
+            "the second request should also get a protocol reply"
+        );
 
         server.stop();
-        assert!(!config.ctl_socket.exists(), "stop 后应删除 socket 文件");
+        assert!(
+            !config.ctl_socket.exists(),
+            "the socket file should be removed after stop"
+        );
         assert!(!is_running(&config.ctl_socket));
     }
 }

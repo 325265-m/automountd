@@ -37,7 +37,9 @@ pub fn read_proc_filesystems() -> HashSet<String> {
     {
         // Non-Linux platforms have no /proc, so returning an empty set is fine (callers use it to
         // skip the kernel capability check).
-        logging::debug("当前平台没有 /proc/filesystems，按未知内核能力处理");
+        logging::debug(
+            "no /proc/filesystems on this platform; treating kernel capabilities as unknown",
+        );
         HashSet::new()
     }
 }
@@ -49,7 +51,7 @@ pub fn read_proc_filesystems_from(path: &Path) -> HashSet<String> {
         Ok(text) => text,
         Err(err) => {
             logging::debug(format!(
-                "无法读取 {}（按空列表处理）: {err}",
+                "cannot read {} (treating as an empty list): {err}",
                 path.display()
             ));
             return supported;
@@ -73,8 +75,10 @@ pub fn read_proc_filesystems_from(path: &Path) -> HashSet<String> {
 pub fn choose_driver(fstype: &str, supported: &HashSet<String>) -> Result<String> {
     let raw = fstype.trim();
     if raw.is_empty() {
-        return Err(Error::device("文件系统类型为空，无法选择挂载驱动")
-            .with_hint("可先运行 'blkid <设备>' 确认设备是否已格式化"));
+        return Err(
+            Error::device("filesystem type is empty, cannot choose a mount driver")
+                .with_hint("run 'blkid <device>' first to check whether the device is formatted"),
+        );
     }
     let lower = raw.to_ascii_lowercase();
     let has = |name: &str| supported.is_empty() || supported.contains(name);
@@ -93,7 +97,7 @@ pub fn choose_driver(fstype: &str, supported: &HashSet<String>) -> Result<String
         // Legacy HFS is also read through the hfsplus driver.
         "hfs" | "hfsplus" => Ok("hfsplus".to_string()),
         "exfat" if !has("exfat") => Err(Error::unsupported(
-            "内核不支持 exfat 文件系统（未找到 exfat 驱动）",
+            "the kernel does not support the exfat filesystem (no exfat driver found)",
         )
         .with_hint(suggest_packages("exfat").join(" "))),
         "exfat" => Ok("exfat".to_string()),
@@ -101,7 +105,7 @@ pub fn choose_driver(fstype: &str, supported: &HashSet<String>) -> Result<String
         _ => {
             if !has(&lower) {
                 return Err(Error::unsupported(format!(
-                    "内核不支持文件系统 {raw}（可用驱动列表中未找到 {lower}）"
+                    "the kernel does not support filesystem {raw} (no {lower} in the available driver list)"
                 ))
                 .with_hint(suggest_packages(&lower).join(" ")));
             }
@@ -164,7 +168,9 @@ pub fn build_options(
             .replace("{user}", &user_name)
             .replace("{label}", &label);
         if expanded.contains('{') || expanded.contains('}') {
-            logging::debug(format!("忽略含未知占位符的挂载选项: {item}"));
+            logging::debug(format!(
+                "ignoring mount option with unknown placeholder: {item}"
+            ));
             continue;
         }
         let key = expanded.split('=').next().unwrap_or("").trim().to_string();
@@ -214,15 +220,18 @@ pub fn suggest_packages(fstype: &str) -> Vec<String> {
 
     if packages.is_empty() {
         let mut hints = vec![format!(
-            "请确认内核已加载 {lower} 文件系统模块（可尝试 modprobe {lower}）"
+            "make sure the kernel has the {lower} filesystem module loaded (try modprobe {lower})"
         )];
-        hints.push("或安装对应的用户态驱动（如 fuse3 与 ntfs-3g/exfat-fuse）".to_string());
+        hints.push(
+            "or install the matching userspace driver (for example fuse3 with ntfs-3g/exfat-fuse)"
+                .to_string(),
+        );
         return hints;
     }
 
     vec![
         format!(
-            "内核缺少 {lower} 支持，请安装以下软件包之一: {}",
+            "the kernel lacks {lower} support; install one of the following packages: {}",
             packages.join(" / ")
         ),
         format!("Debian/Ubuntu: sudo apt install {}", packages.join(" ")),
@@ -315,7 +324,7 @@ mod tests {
             assert_eq!(
                 choose_driver(fstype, &supported(&["vfat"])).unwrap(),
                 "vfat",
-                "类型 {fstype}"
+                "fstype {fstype}"
             );
         }
         assert_eq!(
@@ -341,7 +350,10 @@ mod tests {
         let err = choose_driver("exfat", &supported(&["ext4"])).unwrap_err();
         assert_eq!(err.kind, crate::error::ErrorKind::Unsupported);
         let hint = err.hint.as_deref().unwrap_or_default();
-        assert!(hint.contains("exfatprogs"), "提示应包含 exfatprogs: {hint}");
+        assert!(
+            hint.contains("exfatprogs"),
+            "hint should mention exfatprogs: {hint}"
+        );
         assert!(hint.contains("exfat-fuse"));
 
         let err = choose_driver("customfs", &supported(&["ext4"])).unwrap_err();
@@ -455,12 +467,12 @@ mod tests {
     }
 
     #[test]
-    fn suggests_packages_in_chinese() {
+    fn suggests_packages() {
         let hints = suggest_packages("exfat");
         let joined = hints.join(" ");
         assert!(joined.contains("exfatprogs"));
         assert!(joined.contains("exfat-fuse"));
-        assert!(joined.contains("安装"));
+        assert!(joined.contains("install"));
 
         let hints = suggest_packages("ntfs");
         assert!(hints.join(" ").contains("ntfs-3g"));

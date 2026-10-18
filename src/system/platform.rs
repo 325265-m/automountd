@@ -68,7 +68,7 @@ pub fn chown(path: &Path, uid: u32, gid: u32) -> std::io::Result<()> {
         use std::ffi::CString;
         use std::os::unix::ffi::OsStrExt;
         let c_path = CString::new(path.as_os_str().as_bytes()).map_err(|_| {
-            std::io::Error::new(std::io::ErrorKind::InvalidInput, "路径包含 NUL 字节")
+            std::io::Error::new(std::io::ErrorKind::InvalidInput, "path contains a NUL byte")
         })?;
         let rc = unsafe { sys::chown(c_path.as_ptr(), uid, gid) };
         if rc == 0 {
@@ -157,8 +157,11 @@ pub fn require_root(operation: &str) -> Result<()> {
     if is_root() {
         return Ok(());
     }
-    Err(Error::permission(format!("{operation}需要 root 权限"))
-        .with_hint("请使用 sudo，或先启动 automountd 服务后通过 'automountd mount ...' 执行"))
+    Err(
+        Error::permission(format!("{operation} requires root privileges")).with_hint(
+            "Use sudo, or start the automountd service and run it via 'automountd mount ...'",
+        ),
+    )
 }
 
 /// Current time (Unix seconds).

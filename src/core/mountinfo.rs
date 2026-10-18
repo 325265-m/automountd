@@ -91,7 +91,7 @@ pub fn read_mountinfo_from(path: &Path) -> Vec<MountEntry> {
     match std::fs::read_to_string(path) {
         Ok(text) => parse_mountinfo(&text),
         Err(err) => {
-            crate::logging::debug(format!("无法读取 {}: {err}", path.display()));
+            crate::logging::debug(format!("cannot read {}: {err}", path.display()));
             Vec::new()
         }
     }

@@ -57,9 +57,11 @@ impl State {
         fs::create_dir_all(&dir).map_err(|err| {
             Error::new(
                 ErrorKind::Io,
-                format!("无法创建状态目录 {}: {err}", dir.display()),
+                format!("failed to create state directory {}: {err}", dir.display()),
             )
-            .with_hint("请确认 automountd 有写入权限，或修改 state_dir 配置")
+            .with_hint(
+                "make sure automountd has write permission, or change the state_dir configuration",
+            )
         })?;
         #[cfg(unix)]
         {
@@ -78,7 +80,7 @@ impl State {
             Err(err) => {
                 return Err(Error::new(
                     ErrorKind::Io,
-                    format!("无法读取状态文件 {}: {err}", self.path.display()),
+                    format!("failed to read state file {}: {err}", self.path.display()),
                 ))
             }
         };
@@ -93,7 +95,7 @@ impl State {
                         self.records.insert(record.device.clone(), record);
                     }
                     None => logging::warn(format!(
-                        "状态文件第 {} 行的挂载记录已损坏，已跳过",
+                        "corrupt mount record on line {} of the state file; skipped",
                         index + 1
                     )),
                 }
@@ -125,7 +127,7 @@ impl State {
         fs::create_dir_all(&dir).map_err(|err| {
             Error::new(
                 ErrorKind::Io,
-                format!("无法创建状态目录 {}: {err}", dir.display()),
+                format!("failed to create state directory {}: {err}", dir.display()),
             )
         })?;
         #[cfg(unix)]
@@ -155,14 +157,17 @@ impl State {
             let mut file = fs::File::create(&tmp).map_err(|err| {
                 Error::new(
                     ErrorKind::Io,
-                    format!("无法写入临时状态文件 {}: {err}", tmp.display()),
+                    format!(
+                        "failed to write temporary state file {}: {err}",
+                        tmp.display()
+                    ),
                 )
             })?;
             if let Err(err) = file.write_all(text.as_bytes()) {
                 let _ = fs::remove_file(&tmp);
                 return Err(Error::new(
                     ErrorKind::Io,
-                    format!("写入 {} 失败: {err}", tmp.display()),
+                    format!("failed to write {}: {err}", tmp.display()),
                 ));
             }
             file.flush().ok();
@@ -176,7 +181,10 @@ impl State {
             let _ = fs::remove_file(&tmp);
             Error::new(
                 ErrorKind::Io,
-                format!("替换状态文件 {} 失败: {err}", self.path.display()),
+                format!(
+                    "failed to replace state file {}: {err}",
+                    self.path.display()
+                ),
             )
         })?;
         Ok(())
@@ -242,7 +250,7 @@ impl State {
 pub fn read_state(config: &Config) -> State {
     let mut state = State::new(config);
     if let Err(err) = state.load() {
-        logging::warn(format!("读取状态失败: {err}"));
+        logging::warn(format!("failed to read state: {err}"));
     }
     state
 }
@@ -439,7 +447,7 @@ mod tests {
         );
         assert!(
             text.contains("USB%09Disk%0A2"),
-            "卷标中的 TAB / 换行未被转义: {text}"
+            "TAB / newline in the label was not escaped: {text}"
         );
 
         let mut loaded = State::new(&config);
@@ -477,9 +485,9 @@ mod tests {
                 "started_at=123\n",
                 "dry_run=yes\n",
                 "backend=poll\n",
-                "mount\t/dev/sdb1\t/media/a\texfat\texfat\tUUID-1\t卷标\t1000\thotplug\t1700000000\tnosuid,nodev\n",
-                "mount\t坏行\n",
-                "未知的行\n",
+                "mount\t/dev/sdb1\t/media/a\texfat\texfat\tUUID-1\tVOL-1\t1000\thotplug\t1700000000\tnosuid,nodev\n",
+                "mount\tbad line\n",
+                "unknown line\n",
             ),
         );
         let mut state = State::new(&config_with(dir.path()));
@@ -491,7 +499,7 @@ mod tests {
         assert_eq!(state.backend, "poll");
         assert_eq!(state.len(), 1);
         let found = state.find_by_target("/media/a/").unwrap();
-        assert_eq!(found.label.as_deref(), Some("卷标"));
+        assert_eq!(found.label.as_deref(), Some("VOL-1"));
         assert_eq!(found.options, vec!["nosuid", "nodev"]);
         assert_eq!(found.owner_uid, Some(1000));
     }
@@ -511,7 +519,7 @@ mod tests {
 
         let removed = state.remove("sdc1").unwrap();
         assert_eq!(removed.device, "/dev/sdc1");
-        assert!(state.remove("不存在").is_none());
+        assert!(state.remove("missing").is_none());
         assert!(state.is_empty());
         assert!(state.find_by_target("/media/a").is_none());
     }

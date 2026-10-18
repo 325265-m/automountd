@@ -141,8 +141,8 @@ fn parse_lang(value: &str) -> Result<String> {
         "auto" => Ok("auto".to_string()),
         "zh" | "zh-cn" | "zh_cn" | "zh-hans" => Ok("zh".to_string()),
         "en" | "en-us" | "en_us" | "en-gb" | "en_gb" => Ok("en".to_string()),
-        other => Err(Error::config(format!("不支持的语言: {other}"))
-            .with_hint("可选值: zh, en, auto（默认读取 AUTOMOUNTD_LANG / LANG）")),
+        other => Err(Error::config(format!("Unsupported language: {other}"))
+            .with_hint("Valid values: zh, en, auto (default: read AUTOMOUNTD_LANG / LANG)")),
     }
 }
 
@@ -167,7 +167,8 @@ fn parse_global(args: &[String]) -> Result<(Global, Vec<String>)> {
             "--lang" => {
                 index += 1;
                 let value = args.get(index).ok_or_else(|| {
-                    Error::config("--lang 需要一个值（zh 或 en）").with_hint("例如: --lang en")
+                    Error::config("--lang requires a value (zh or en)")
+                        .with_hint("For example: --lang en")
                 })?;
                 global.lang = Some(parse_lang(value)?);
             }
@@ -876,7 +877,7 @@ pub(crate) fn local_umount(
     }
 
     if !config.dry_run {
-        platform::require_root("卸载")?;
+        platform::require_root("unmount")?;
     }
     let mut manager = MountManager::new(config.clone(), runner);
     let unmounted = manager.unmount(&target, lazy, eject, false)?;
@@ -1193,7 +1194,7 @@ fn fstab_add(config: &Config, runner: Arc<dyn CommandRunner>, tail: &[String]) -
         println!("  {}", entry.to_line());
         return Ok(0);
     }
-    platform::require_root("写入 fstab")?;
+    platform::require_root("write fstab")?;
     let (changed, message) = fstab::add_entry(&config.fstab_path, &entry)?;
     if i18n::is_en() {
         println!(
@@ -1290,7 +1291,7 @@ fn fstab_remove(config: &Config, tail: &[String]) -> Result<i32> {
         );
         return Ok(0);
     }
-    platform::require_root("修改 fstab")?;
+    platform::require_root("modify fstab")?;
 
     let source = reference;
     let (changed, message) =

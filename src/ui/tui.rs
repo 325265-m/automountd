@@ -279,7 +279,7 @@ fn mount_device(config: &Config, reference: &str) -> Result<String> {
         ));
     }
 
-    crate::platform::require_root("挂载")?;
+    crate::platform::require_root("mount")?;
     let manager_runner: Arc<dyn CommandRunner> = Arc::new(SystemRunner);
     let result = crate::cli::local_mount(config, manager_runner, reference, false, false)?;
     Ok(format!(

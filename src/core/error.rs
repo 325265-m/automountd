@@ -30,17 +30,17 @@ impl ErrorKind {
 
     pub fn label(self) -> &'static str {
         match self {
-            ErrorKind::Config => "配置错误",
-            ErrorKind::Io => "IO 错误",
-            ErrorKind::Command => "命令执行失败",
-            ErrorKind::Device => "设备错误",
-            ErrorKind::Mount => "挂载错误",
-            ErrorKind::NotMounted => "未挂载",
-            ErrorKind::Busy => "设备忙碌",
-            ErrorKind::Permission => "权限不足",
-            ErrorKind::NotRunning => "服务未运行",
-            ErrorKind::Protocol => "通信错误",
-            ErrorKind::Unsupported => "不支持",
+            ErrorKind::Config => "Configuration error",
+            ErrorKind::Io => "I/O error",
+            ErrorKind::Command => "Command failed",
+            ErrorKind::Device => "Device error",
+            ErrorKind::Mount => "Mount error",
+            ErrorKind::NotMounted => "Not mounted",
+            ErrorKind::Busy => "Device busy",
+            ErrorKind::Permission => "Permission denied",
+            ErrorKind::NotRunning => "Service not running",
+            ErrorKind::Protocol => "Protocol error",
+            ErrorKind::Unsupported => "Unsupported",
         }
     }
 }
@@ -77,7 +77,7 @@ impl Error {
     pub fn command(program: &str, detail: impl Into<String>) -> Self {
         Self::new(
             ErrorKind::Command,
-            format!("命令 {program} 执行失败: {}", detail.into()),
+            format!("command {program} failed: {}", detail.into()),
         )
     }
 
@@ -126,7 +126,7 @@ pub type Result<T> = std::result::Result<T, Error>;
 
 /// Aggregate several validation problems into a single configuration error.
 pub fn config_problems(problems: &[String]) -> Error {
-    let mut message = String::from("配置无效:");
+    let mut message = String::from("Invalid configuration:");
     for problem in problems {
         message.push_str("\n  - ");
         message.push_str(problem);

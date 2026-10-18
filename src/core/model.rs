@@ -132,19 +132,21 @@ impl Decision {
 /// Human-readable explanation of a reason code.
 pub fn explain(code: &str) -> &'static str {
     match code {
-        "ok" => "可自动挂载",
-        "no-filesystem" => "未检测到文件系统（未格式化、已加密或只是分区表）",
-        "ignored-fstype" => "该文件系统类型被配置忽略",
-        "system-disk" => "属于系统盘，出于安全考虑不自动挂载",
-        "internal-disk" => "内置磁盘（未开启 auto_mount_internal_disks）",
-        "not-allowed" => "不在 allowed_uuids 白名单内",
-        "blocked" => "被 blocked_uuids / blocked_labels 排除",
-        "not-a-data-device" => "不是可挂载的数据设备（loop/raid/lvm 等）",
-        "too-small" => "容量过小，忽略",
-        "already-mounted" => "已经处于挂载状态",
-        "missing-devnode" => "设备节点不存在",
-        "unsupported" => "内核不支持该文件系统",
-        _ => "未知原因",
+        "ok" => "can be auto-mounted",
+        "no-filesystem" => {
+            "no filesystem detected (unformatted, encrypted, or a bare partition table)"
+        }
+        "ignored-fstype" => "this filesystem type is ignored by configuration",
+        "system-disk" => "on the system disk; not auto-mounted for safety",
+        "internal-disk" => "internal disk (auto_mount_internal_disks is disabled)",
+        "not-allowed" => "not in the allowed_uuids allowlist",
+        "blocked" => "excluded by blocked_uuids / blocked_labels",
+        "not-a-data-device" => "not a mountable data device (loop/raid/lvm, etc.)",
+        "too-small" => "capacity too small; ignored",
+        "already-mounted" => "already mounted",
+        "missing-devnode" => "device node does not exist",
+        "unsupported" => "the kernel does not support this filesystem",
+        _ => "unknown reason",
     }
 }
 

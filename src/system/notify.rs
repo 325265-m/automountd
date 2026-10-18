@@ -25,7 +25,7 @@ pub fn send(
         return false;
     }
     if !runner.which("notify-send") {
-        logging::debug("未找到 notify-send，跳过桌面通知");
+        logging::debug("notify-send not found; skipping desktop notification");
         return false;
     }
 
@@ -36,33 +36,38 @@ pub fn send(
         None
     };
     let Some(target) = user.or(detected.as_ref()) else {
-        logging::debug("未能识别桌面用户，跳过桌面通知");
+        logging::debug("could not identify the desktop user; skipping desktop notification");
         return false;
     };
 
     let is_root = platform::euid() == 0;
     if is_root && target.uid == 0 {
-        logging::debug("当前以 root 运行且没有普通桌面用户，跳过桌面通知");
+        logging::debug(
+            "running as root with no regular desktop user; skipping desktop notification",
+        );
         return false;
     }
 
     let urgency = normalize_urgency(urgency);
     let (program, argv) = build_notification(runner, target, title, body, urgency, is_root);
     let args: Vec<&str> = argv.iter().map(String::as_str).collect();
-    logging::debug(format!("发送桌面通知: {program} {}", args.join(" ")));
+    logging::debug(format!(
+        "sending desktop notification: {program} {}",
+        args.join(" ")
+    ));
 
     match runner.run(&program, &args, Some(NOTIFY_TIMEOUT)) {
         Ok(output) if output.ok() => true,
         Ok(output) => {
             logging::warn(format!(
-                "notify-send 执行失败（{}）: {}",
+                "notify-send failed ({}): {}",
                 output.status,
                 output.stderr_trimmed()
             ));
             false
         }
         Err(err) => {
-            logging::warn(format!("无法执行 {program}: {err}"));
+            logging::warn(format!("failed to run {program}: {err}"));
             false
         }
     }
@@ -97,7 +102,7 @@ pub fn notify_error(
     user: Option<&UserInfo>,
 ) -> bool {
     let title = if title.trim().is_empty() {
-        "自动挂载出错"
+        "Automount error"
     } else {
         title
     };
@@ -157,13 +162,13 @@ fn normalize_urgency(urgency: &str) -> &'static str {
 
 fn mounted_texts(device: &str, target: &str) -> (String, String) {
     (
-        "磁盘已自动挂载".to_string(),
-        format!("{device} 已挂载到 {target}"),
+        "Disk mounted automatically".to_string(),
+        format!("{device} mounted at {target}"),
     )
 }
 
 fn unmounted_texts(target: &str) -> (String, String) {
-    ("磁盘已卸载".to_string(), format!("{target} 已卸载"))
+    ("Disk unmounted".to_string(), format!("{target} unmounted"))
 }
 
 #[cfg(test)]
@@ -189,8 +194,8 @@ mod tests {
             &config,
             &runner,
             Some(&user(1000, "alice")),
-            "标题",
-            "正文",
+            "Title",
+            "Body",
             "normal"
         ));
         assert_eq!(runner.call_count(), 0);
@@ -216,8 +221,8 @@ mod tests {
         let (program, argv) = build_notification(
             &runner,
             &user(1000, "alice"),
-            "磁盘已自动挂载",
-            "/dev/sdb1 已挂载到 /media/alice/UDISK",
+            "Disk mounted automatically",
+            "/dev/sdb1 mounted at /media/alice/UDISK",
             "normal",
             true,
         );
@@ -238,8 +243,8 @@ mod tests {
                 "drive-harddisk",
                 "-u",
                 "normal",
-                "磁盘已自动挂载",
-                "/dev/sdb1 已挂载到 /media/alice/UDISK",
+                "Disk mounted automatically",
+                "/dev/sdb1 mounted at /media/alice/UDISK",
             ]
             .into_iter()
             .map(String::from)
@@ -253,8 +258,8 @@ mod tests {
         let (program, argv) = build_notification(
             &runner,
             &user(1000, "alice"),
-            "标题",
-            "正文",
+            "Title",
+            "Body",
             "critical",
             false,
         );
@@ -268,8 +273,8 @@ mod tests {
                 "drive-harddisk",
                 "-u",
                 "critical",
-                "标题",
-                "正文",
+                "Title",
+                "Body",
             ]
             .into_iter()
             .map(String::from)
@@ -280,8 +285,8 @@ mod tests {
         let (program, argv) = build_notification(
             &runner,
             &user(1000, "alice"),
-            "标题",
-            "正文",
+            "Title",
+            "Body",
             "normal",
             true,
         );
@@ -297,8 +302,8 @@ mod tests {
             &config,
             &runner,
             Some(&user(1000, "alice")),
-            "磁盘已自动挂载",
-            "正文",
+            "Disk mounted automatically",
+            "Body",
             "low"
         ));
         let calls = runner.calls();
@@ -315,7 +320,10 @@ mod tests {
             "notify-send"
         };
         assert!(calls[0].1.iter().any(|arg| arg == "low"));
-        assert!(calls[0].1.iter().any(|arg| arg == "磁盘已自动挂载"));
+        assert!(calls[0]
+            .1
+            .iter()
+            .any(|arg| arg == "Disk mounted automatically"));
 
         // send must return false when the program actually run exits non-zero
         let runner = MockRunner::new().respond(
@@ -326,8 +334,8 @@ mod tests {
             &config,
             &runner,
             Some(&user(1000, "alice")),
-            "标题",
-            "正文",
+            "Title",
+            "Body",
             "normal"
         ));
 
@@ -341,14 +349,14 @@ mod tests {
     }
 
     #[test]
-    fn messages_are_chinese_and_urgency_normalized() {
+    fn messages_are_english_and_urgency_normalized() {
         let (title, body) = mounted_texts("/dev/sdb1", "/media/alice/UDISK");
-        assert!(title.contains("挂载"));
+        assert!(title.contains("mounted"));
         assert!(body.contains("/dev/sdb1"));
         assert!(body.contains("/media/alice/UDISK"));
 
         let (title, body) = unmounted_texts("/media/alice/UDISK");
-        assert!(title.contains("卸载"));
+        assert!(title.contains("unmounted"));
         assert!(body.contains("/media/alice/UDISK"));
 
         assert_eq!(normalize_urgency("LOW"), "low");
@@ -360,11 +368,17 @@ mod tests {
         // so the arguments are only checked when a notification program really ran.
         let config = Config::default();
         let runner = MockRunner::new();
-        let _ = notify_error(&config, &runner, "挂载失败", "/dev/sdb1: NTFS 不一致", None);
+        let _ = notify_error(
+            &config,
+            &runner,
+            "Mount failed",
+            "/dev/sdb1: NTFS inconsistent",
+            None,
+        );
         for (program, args) in runner.calls() {
             if program == "notify-send" || program == "runuser" {
-                assert!(args.iter().any(|arg| arg == "critical"), "参数: {args:?}");
-                assert!(args.iter().any(|arg| arg == "挂载失败"));
+                assert!(args.iter().any(|arg| arg == "critical"), "args: {args:?}");
+                assert!(args.iter().any(|arg| arg == "Mount failed"));
             }
         }
     }

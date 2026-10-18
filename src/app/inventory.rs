@@ -174,7 +174,7 @@ mod tests {
             path: format!("/dev/{name}"),
             dev_type: dev_type.to_string(),
             fstype: fstype.map(str::to_string),
-            label: Some("U 盘".to_string()),
+            label: Some("USB Disk".to_string()),
             uuid: Some("1234-ABCD".to_string()),
             partuuid: None,
             size: 32 * 1024 * 1024 * 1024,
@@ -212,7 +212,7 @@ mod tests {
             fstype: "exfat".to_string(),
             driver: "exfat".to_string(),
             uuid: Some("1234-ABCD".to_string()),
-            label: Some("U 盘".to_string()),
+            label: Some("USB Disk".to_string()),
             owner_uid: Some(1000),
             reason: "hotplug".to_string(),
             mounted_at: 1_700_000_100,
@@ -241,7 +241,7 @@ mod tests {
         // One USB stick: one exfat partition plus one unformatted partition
         let json = r#"{"blockdevices":[{"name":"sdz","type":"disk","rm":true,
             "hotplug":true,"tran":"usb","size":32000000000,"children":[
-            {"name":"sdz1","type":"part","fstype":"exfat","label":"U 盘",
+            {"name":"sdz1","type":"part","fstype":"exfat","label":"USB Disk",
              "uuid":"1234-ABCD","rm":true,"hotplug":true,"tran":"usb","size":31000000000},
             {"name":"sdz2","type":"part","fstype":null,"size":0}]}]}"#;
         let runner = MockRunner::new();
@@ -249,18 +249,26 @@ mod tests {
         let temp = TempDir::new("inventory-snapshot");
         let state = state_in(&temp, Vec::new());
 
-        let views = snapshot(&Config::default(), &runner, &state, false).expect("快照失败");
+        let views = snapshot(&Config::default(), &runner, &state, false).expect("snapshot failed");
         assert!(runner.called("lsblk"));
         let names: Vec<&str> = views.iter().map(|view| view.device.name.as_str()).collect();
-        assert_eq!(names, vec!["sdz1"], "未格式化分区应被普通列表隐藏");
+        assert_eq!(
+            names,
+            vec!["sdz1"],
+            "unformatted partitions should be hidden from the normal list"
+        );
         assert_eq!(views[0].device.path, "/dev/sdz1");
         assert_eq!(views[0].device.parent.as_deref(), Some("sdz"));
-        assert_eq!(views[0].device.label.as_deref(), Some("U 盘"));
+        assert_eq!(views[0].device.label.as_deref(), Some("USB Disk"));
         assert!(views[0].decision.allowed, "{}", views[0].decision.message);
 
         runner.push("lsblk", CommandOutput::success(json.to_string()));
-        let all = snapshot(&Config::default(), &runner, &state, true).expect("快照失败");
-        assert_eq!(all.len(), 3, " --all 应保留整盘与未格式化分区");
+        let all = snapshot(&Config::default(), &runner, &state, true).expect("snapshot failed");
+        assert_eq!(
+            all.len(),
+            3,
+            " --all should keep whole disks and unformatted partitions"
+        );
         let all_names: Vec<&str> = all.iter().map(|view| view.device.name.as_str()).collect();
         assert_eq!(all_names, vec!["sdz", "sdz1", "sdz2"]);
     }
@@ -268,9 +276,9 @@ mod tests {
     #[test]
     fn marks_already_mounted_devices() {
         let temp = TempDir::new("inventory-mounted");
-        let state = state_in(&temp, vec![record("/dev/sdb1", "/media/u/U 盘")]);
+        let state = state_in(&temp, vec![record("/dev/sdb1", "/media/u/USB-Disk")]);
         let devices = vec![device("sdb1", "part", Some("exfat"))];
-        let mounts = vec![mount_entry("/dev/sdb1", "/media/u/U 盘")];
+        let mounts = vec![mount_entry("/dev/sdb1", "/media/u/USB-Disk")];
         let views = build_views(
             &Config::default(),
             &devices,
@@ -281,12 +289,15 @@ mod tests {
         );
         assert_eq!(views.len(), 1);
         assert!(views[0].mounted());
-        assert_eq!(views[0].target(), Some("/media/u/U 盘"));
+        assert_eq!(views[0].target(), Some("/media/u/USB-Disk"));
         assert_eq!(views[0].decision.code, "already-mounted");
         assert!(!views[0].decision.allowed);
         // The managed record comes from the state file
-        let managed = views[0].managed.as_ref().expect("应有 managed 记录");
-        assert_eq!(managed.target, "/media/u/U 盘");
+        let managed = views[0]
+            .managed
+            .as_ref()
+            .expect("expected a managed record");
+        assert_eq!(managed.target, "/media/u/USB-Disk");
         assert_eq!(managed.owner_uid, Some(1000));
     }
 
@@ -329,7 +340,7 @@ mod tests {
         let bare_view = all
             .iter()
             .find(|view| view.device.name == "sdb2")
-            .expect("sdb2 应出现在 --all 结果中");
+            .expect("sdb2 should appear in the --all results");
         assert_eq!(bare_view.decision.code, "no-filesystem");
         assert_eq!(
             all.iter()
@@ -358,7 +369,11 @@ mod tests {
             &state,
             false,
         );
-        assert_eq!(views.len(), 1, "内置盘应出现在普通列表中并给出原因");
+        assert_eq!(
+            views.len(),
+            1,
+            "internal disks should appear in the normal list with a reason"
+        );
         assert_eq!(views[0].decision.code, "internal-disk");
         assert!(!views[0].decision.allowed);
         assert!(views[0].managed.is_none());
@@ -392,7 +407,7 @@ mod tests {
         assert_eq!(
             natural_cmp("sda01", "sda1"),
             std::cmp::Ordering::Less,
-            "数值相同按原文比较（0 < 1），保证排序稳定"
+            "same numeric value compares the raw text (0 < 1) to keep the sort stable"
         );
     }
 
@@ -400,7 +415,7 @@ mod tests {
     fn matches_managed_record_by_basename() {
         let temp = TempDir::new("inventory-managed");
         // The record only stores the device name (for example from an older state file)
-        let state = state_in(&temp, vec![record("sdb1", "/media/u/U 盘")]);
+        let state = state_in(&temp, vec![record("sdb1", "/media/u/USB-Disk")]);
         let views = build_views(
             &Config::default(),
             &[device("sdb1", "part", Some("exfat"))],
@@ -412,13 +427,13 @@ mod tests {
         assert_eq!(views.len(), 1);
         assert_eq!(
             views[0].managed.as_ref().map(|r| r.target.as_str()),
-            Some("/media/u/U 盘")
+            Some("/media/u/USB-Disk")
         );
         // An exact path match wins over basename
         let temp2 = TempDir::new("inventory-managed2");
-        let mut other = record("/dev/sdc1", "/media/u/别的");
+        let mut other = record("/dev/sdc1", "/media/u/other");
         other.device = "/dev/sdc1".to_string();
-        let state2 = state_in(&temp2, vec![record("sdc1", "/media/旧"), other]);
+        let state2 = state_in(&temp2, vec![record("sdc1", "/media/old"), other]);
         let views2 = build_views(
             &Config::default(),
             &[device("sdc1", "part", Some("exfat"))],
@@ -429,7 +444,7 @@ mod tests {
         );
         assert_eq!(
             views2[0].managed.as_ref().map(|r| r.target.as_str()),
-            Some("/media/u/别的")
+            Some("/media/u/other")
         );
     }
 
@@ -438,11 +453,11 @@ mod tests {
         let temp = TempDir::new("inventory-dedupe");
         let state = state_in(&temp, Vec::new());
         let mut dev = device("sdb1", "part", Some("exfat"));
-        dev.mountpoint = Some("/media/u/U 盘".to_string());
+        dev.mountpoint = Some("/media/u/USB-Disk".to_string());
         // The same device is bind-mounted twice
         let mounts = vec![
-            mount_entry("/dev/sdb1", "/media/u/U 盘"),
-            mount_entry("/dev/sdb1", "/media/u/U 盘"),
+            mount_entry("/dev/sdb1", "/media/u/USB-Disk"),
+            mount_entry("/dev/sdb1", "/media/u/USB-Disk"),
             mount_entry("/dev/sdb1", "/mnt/extra"),
         ];
         let views = build_views(
@@ -455,7 +470,7 @@ mod tests {
         );
         assert_eq!(
             views[0].mountpoints,
-            vec!["/media/u/U 盘".to_string(), "/mnt/extra".to_string()]
+            vec!["/media/u/USB-Disk".to_string(), "/mnt/extra".to_string()]
         );
     }
 }

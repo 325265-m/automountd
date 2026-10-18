@@ -53,7 +53,10 @@ impl MountManager {
 
     fn build(config: Config, runner: Arc<dyn CommandRunner>, dry_run: bool) -> Self {
         let supported = fstypes::read_proc_filesystems();
-        debug(format!("检测到内核支持的文件系统 {} 种", supported.len()));
+        debug(format!(
+            "kernel reports {} supported filesystems",
+            supported.len()
+        ));
         Self {
             config,
             runner,
@@ -104,7 +107,10 @@ impl MountManager {
 
         let candidate = base.join(&name);
         let target = if self.can_reuse_dir(&candidate, &reserved) {
-            debug(format!("复用已存在的空挂载点 {}", candidate.display()));
+            debug(format!(
+                "reusing existing empty mount point {}",
+                candidate.display()
+            ));
             candidate
         } else {
             naming::unique_dir(&base, &name, &reserved)
@@ -131,11 +137,11 @@ impl MountManager {
             .map(str::to_string)
         else {
             return Err(Error::device(format!(
-                "设备 {} 没有可识别的文件系统，无法挂载",
+                "device {} has no recognizable filesystem, cannot mount it",
                 device.path
             ))
             .with_hint(
-                "请先格式化该设备（例如 mkfs.exfat），或用 'automountd list --all' 确认设备状态",
+                "Format the device first (e.g. mkfs.exfat), or use 'automountd list --all' to check its state",
             ));
         };
 
@@ -169,7 +175,7 @@ impl MountManager {
         extra: &[String],
     ) -> Result<MountResult> {
         if !self.dry_run {
-            platform::require_root("挂载")?;
+            platform::require_root("mounting")?;
         }
 
         let mounts = self.current_mounts();
@@ -182,7 +188,7 @@ impl MountManager {
             let driver =
                 fstypes::choose_driver(&fstype, &self.supported).unwrap_or_else(|_| fstype.clone());
             info(format!(
-                "{} 已经挂载在 {}，跳过",
+                "{} is already mounted at {}, skipping",
                 device.path, existing.target
             ));
             return Ok(MountResult {
@@ -201,7 +207,7 @@ impl MountManager {
         self.planned.push(argv);
 
         if self.dry_run {
-            info(format!("dry-run：将执行 {}", plan.describe()));
+            info(format!("dry-run: would run {}", plan.describe()));
             return Ok(MountResult {
                 device: plan.device.clone(),
                 target: plan.target.clone(),
@@ -238,15 +244,17 @@ impl MountManager {
                     _ => {
                         self.cleanup_empty_dirs(&plan.target);
                         return Err(Error::mount(format!(
-                            "挂载点 {} 在创建后变成了符号链接或不存在，已中止",
+                            "mount point {} became a symlink or disappeared after creation; aborting",
                             plan.target.display()
                         ))
-                        .with_hint("可能有其他进程在操作挂载目录，请检查并重试"));
+                        .with_hint(
+                            "Another process may be manipulating the mount directory; check it and retry"
+                        ));
                     }
                 }
                 if let Err(err) = platform::chown(&plan.target, user.uid, user.gid) {
                     warn(format!(
-                        "无法把挂载点 {} 交给 {}({}): {err}",
+                        "failed to hand mount point {} to {}({}): {err}",
                         plan.target.display(),
                         user.name,
                         user.uid
@@ -258,7 +266,7 @@ impl MountManager {
         let target_text = plan.target.display().to_string();
         let options_text = plan.options_string();
         let timeout = Duration::from_secs(self.config.mount_timeout_seconds.max(1));
-        debug(format!("执行 {}", plan.describe()));
+        debug(format!("running {}", plan.describe()));
         let mut driver = plan.driver.clone();
         let mut fstype = plan.fstype.clone();
         let mut output = match self.run_mount_command(
@@ -285,7 +293,7 @@ impl MountManager {
             };
             if let Some(alternative) = alternative {
                 warn(format!(
-                    "使用 {driver} 挂载 {} 失败，尝试改用 {alternative}",
+                    "mounting {} with {driver} failed, retrying with {alternative}",
                     device.path
                 ));
                 if let Ok(retry) = self.run_mount_command(
@@ -306,18 +314,25 @@ impl MountManager {
         if !output.ok() {
             self.cleanup_empty_dirs(&plan.target);
             let detail = command_detail(output.status, output.stderr_trimmed());
-            let message = format!("挂载 {} 到 {} 失败: {detail}", device.path, target_text);
+            let message = format!(
+                "failed to mount {} at {}: {detail}",
+                device.path, target_text
+            );
             return Err(match diagnose(&output.stderr) {
                 Some(hint) => Error::mount(message).with_hint(hint),
                 None => Error::mount(message),
             });
         }
 
-        if !self.wait_until("挂载", &target_text, MOUNT_CONFIRM_TIMEOUT, true) {
+        if !self.wait_until("mount", &target_text, MOUNT_CONFIRM_TIMEOUT, true) {
             self.cleanup_empty_dirs(&plan.target);
             return Err(
-                Error::mount(format!("挂载命令已返回，但 {target_text} 未出现在挂载表中"))
-                    .with_hint("请用 dmesg 查看内核消息，确认设备仍然在线且文件系统正常"),
+                Error::mount(format!(
+                    "the mount command returned, but {target_text} does not appear in the mount table"
+                ))
+                .with_hint(
+                    "Check the kernel log with dmesg; make sure the device is still online and the filesystem is healthy"
+                ),
             );
         }
 
@@ -336,13 +351,15 @@ impl MountManager {
             );
             self.cleanup_empty_dirs(&plan.target);
             return Err(Error::mount(format!(
-                "实际挂载点与预期不一致（预期 {expected}，实际 {}，当前路径 {target_now}）",
-                actual.unwrap_or_else(|| "未知".to_string())
+                "actual mount point differs from the expected one (expected {expected}, actual {}, current path {target_now})",
+                actual.unwrap_or_else(|| "unknown".to_string())
             ))
-            .with_hint("挂载目录可能在挂载过程中被替换，请检查是否有其他进程操作该路径"));
+            .with_hint(
+                "The mount directory may have been swapped during mounting; check whether another process touches that path"
+            ));
         }
 
-        info(format!("已挂载 {} 到 {target_text}", device.path));
+        info(format!("mounted {} at {target_text}", device.path));
         Ok(MountResult {
             device: plan.device.clone(),
             target: plan.target.clone(),
@@ -378,14 +395,14 @@ impl MountManager {
         power_off: bool,
     ) -> Result<String> {
         if !self.dry_run {
-            platform::require_root("卸载")?;
+            platform::require_root("unmounting")?;
         }
 
         let mounts = self.current_mounts();
         let Some(entry) = mountinfo::find_mount(&mounts, Some(target), None) else {
             return Err(
-                Error::new(ErrorKind::NotMounted, format!("{target} 当前没有挂载")).with_hint(
-                    "可用 'automountd list --all' 查看挂载状态，或检查挂载点路径是否正确",
+                Error::new(ErrorKind::NotMounted, format!("{target} is not mounted")).with_hint(
+                    "Use 'automountd list --all' to check the mount state, or verify the mount point path",
                 ),
             );
         };
@@ -403,7 +420,10 @@ impl MountManager {
         self.planned.push(planned);
 
         if self.dry_run {
-            info(format!("dry-run：将执行 umount {}", umount_args.join(" ")));
+            info(format!(
+                "dry-run: would run umount {}",
+                umount_args.join(" ")
+            ));
             return Ok(mounted_target);
         }
 
@@ -411,16 +431,18 @@ impl MountManager {
         let args: Vec<&str> = umount_args.iter().map(String::as_str).collect();
         let mut output = self.runner.run("umount", &args, Some(timeout))?;
         if !output.ok() && is_busy(&output.stderr) {
-            warn(format!("{mounted_target} 正忙，300ms 后重试一次"));
+            warn(format!(
+                "{mounted_target} is busy, retrying once after 300ms"
+            ));
             std::thread::sleep(Duration::from_millis(300));
             output = self.runner.run("umount", &args, Some(timeout))?;
         }
         if !output.ok() {
             let detail = command_detail(output.status, output.stderr_trimmed());
-            let message = format!("卸载 {mounted_target} 失败: {detail}");
+            let message = format!("failed to unmount {mounted_target}: {detail}");
             if is_busy(&output.stderr) {
                 return Err(Error::new(ErrorKind::Busy, message).with_hint(
-                    "请用 lsof / fuser -vm 找出占用该挂载点的进程，或执行 'automountd umount --lazy <挂载点>'",
+                    "Use lsof / fuser -vm to find the process holding the mount point, or run 'automountd umount --lazy <mount-point>'",
                 ));
             }
             return Err(match diagnose(&output.stderr) {
@@ -429,12 +451,14 @@ impl MountManager {
             });
         }
 
-        if !self.wait_until("卸载", &mounted_target, UNMOUNT_CONFIRM_TIMEOUT, false) {
+        if !self.wait_until("umount", &mounted_target, UNMOUNT_CONFIRM_TIMEOUT, false) {
             return Err(Error::new(
                 ErrorKind::Busy,
-                format!("{mounted_target} 仍然出现在挂载表中"),
+                format!("{mounted_target} still appears in the mount table"),
             )
-            .with_hint("可能有进程占用该挂载点，请尝试 'automountd umount --lazy' 或重启后清理"));
+            .with_hint(
+                "A process may still be using the mount point; try 'automountd umount --lazy' or clean up after a reboot"
+            ));
         }
 
         if self.config.cleanup_dirs {
@@ -445,23 +469,23 @@ impl MountManager {
         let wants_power_off = power_off || self.config.power_off_after_unmount;
         if use_lazy && (wants_eject || wants_power_off) {
             warn(format!(
-                "{} 使用 lazy 卸载，设备可能仍被进程占用；已跳过弹出/断电以避免数据丢失",
+                "{} was lazily unmounted and a process may still use the device; skipping eject/power-off to avoid data loss",
                 mounted_target
             ));
         } else {
             if wants_eject {
-                self.try_optional("eject", &[source.as_str()], "弹出设备");
+                self.try_optional("eject", &[source.as_str()], "ejecting the device");
             }
             if wants_power_off {
                 self.try_optional(
                     "udisksctl",
                     &["power-off", "-b", source.as_str()],
-                    "设备断电",
+                    "powering off the device",
                 );
             }
         }
 
-        info(format!("已卸载 {mounted_target}"));
+        info(format!("unmounted {mounted_target}"));
         Ok(mounted_target)
     }
 
@@ -484,9 +508,9 @@ impl MountManager {
         let Some(target) = target else {
             return Err(Error::new(
                 ErrorKind::NotMounted,
-                format!("{device_path} 当前没有挂载点"),
+                format!("{device_path} has no mount point"),
             )
-            .with_hint("可用 'automountd list --all' 确认设备路径"));
+            .with_hint("Use 'automountd list --all' to confirm the device path"));
         };
         self.unmount(&target, lazy, eject, power_off)
     }
@@ -528,11 +552,11 @@ impl MountManager {
         let target_abs = absolute_path(target)?;
         if target_abs == base_abs || !target_abs.starts_with(&base_abs) {
             return Err(Error::device(format!(
-                "挂载点 {} 不在挂载根目录 {} 之内",
+                "mount point {} is not inside the mount root {}",
                 target.display(),
                 base.display()
             ))
-            .with_hint("卷标可能包含可疑字符，已拒绝操作"));
+            .with_hint("The label may contain suspicious characters; the operation was refused"));
         }
         naming::check_no_symlink_components(&base_abs, &target_abs)?;
         Ok(())
@@ -549,7 +573,7 @@ impl MountManager {
             }
             if started.elapsed() >= limit {
                 debug(format!(
-                    "{action}后 {target} 的挂载状态在 {}ms 内未稳定",
+                    "{target} mount state did not settle within {}ms after {action}",
                     limit.as_millis()
                 ));
                 return false;
@@ -570,7 +594,10 @@ impl MountManager {
         }
         if self.created_dirs.remove(&target_abs) && dir_is_empty(&target_abs) {
             if let Err(err) = fs::remove_dir(&target_abs) {
-                debug(format!("删除空目录 {} 失败: {err}", target_abs.display()));
+                debug(format!(
+                    "failed to remove empty directory {}: {err}",
+                    target_abs.display()
+                ));
             }
         }
         let Some(parent) = target_abs.parent() else {
@@ -582,7 +609,10 @@ impl MountManager {
             && dir_is_empty(parent)
         {
             if let Err(err) = fs::remove_dir(parent) {
-                debug(format!("删除空目录 {} 失败: {err}", parent.display()));
+                debug(format!(
+                    "failed to remove empty directory {}: {err}",
+                    parent.display()
+                ));
             }
         }
     }
@@ -591,20 +621,20 @@ impl MountManager {
     /// affect the unmount result.
     fn try_optional(&self, program: &str, args: &[&str], purpose: &str) {
         if !self.runner.which(program) {
-            warn(format!("未找到 {program}，跳过{purpose}"));
+            warn(format!("{program} not found, skipping {purpose}"));
             return;
         }
         match self
             .runner
             .run(program, args, Some(Duration::from_secs(30)))
         {
-            Ok(output) if output.ok() => info(format!("已{purpose}（{program}）")),
+            Ok(output) if output.ok() => info(format!("{purpose} succeeded ({program})")),
             Ok(output) => warn(format!(
-                "{purpose}失败（{program} 退出码 {}）: {}",
+                "{purpose} failed ({program} exit code {}): {}",
                 output.status,
                 output.stderr_trimmed()
             )),
-            Err(err) => warn(format!("{purpose}失败: {err}")),
+            Err(err) => warn(format!("{purpose} failed: {err}")),
         }
     }
 
@@ -620,32 +650,34 @@ pub fn diagnose(stderr: &str) -> Option<&'static str> {
     let has = |needle: &str| text.contains(needle);
 
     if has("permission denied") || has("operation not permitted") {
-        return Some("权限不足：挂载需要 root，且要确认设备节点可读（可检查 udev 规则与 SELinux/AppArmor 策略）");
+        return Some("Permission denied: mounting needs root, and the device node must be readable (check udev rules and SELinux/AppArmor policy)");
     }
     if has("already mounted") || has("is already mounted on") {
-        return Some("设备已经挂载：请先卸载已有挂载点，或直接使用当前挂载点");
+        return Some("Device already mounted: unmount the existing mount point first, or just use the current one");
     }
     if has("target is busy") || has("device is busy") || has("mountpoint is not empty") {
-        return Some("挂载点被占用：请关闭正在使用该目录的程序，或换一个挂载点后重试");
+        return Some("Mount point is busy: close the programs using that directory, or pick another mount point and retry");
     }
     if has("unknown filesystem type") || has("wrong fs type") || has("bad option") {
-        return Some("内核缺少该文件系统驱动或选项不被支持：请安装对应工具（exfatprogs / ntfs-3g / hfsprogs）并检查挂载选项");
+        return Some("The kernel lacks this filesystem driver or does not support the options: install the matching tools (exfatprogs / ntfs-3g / hfsprogs) and check the mount options");
     }
     if has("ntfs") && (has("inconsistent") || has("chkdsk") || has("hiberfil") || has("dirty")) {
-        return Some("NTFS 卷可能残留 Windows 快速启动/休眠标志：建议在 Windows 上执行 chkdsk /f，或改用 ntfs-3g 并加 remove_hiberfile 选项");
+        return Some("The NTFS volume may still carry Windows fast-startup/hibernation flags: run chkdsk /f on Windows, or switch to ntfs-3g with the remove_hiberfile option");
     }
     if has("transport endpoint is not connected") {
         return Some(
-            "FUSE 连接已断开（Transport endpoint is not connected）：请先卸载再重新挂载该设备",
+            "FUSE connection lost (Transport endpoint is not connected): unmount the device, then mount it again",
         );
     }
     if has("read-only") || has("readonly") {
         return Some(
-            "文件系统处于只读状态：可能是硬件写保护、文件系统错误或挂载选项冲突，请检查 dmesg",
+            "The filesystem is read-only: possibly hardware write protection, filesystem errors or conflicting mount options; check dmesg",
         );
     }
     if has("no such device") || has("does not exist") {
-        return Some("设备节点已消失：请确认设备仍插在接口上，然后重新插拔");
+        return Some(
+            "The device node is gone: make sure the device is still plugged in, then re-plug it",
+        );
     }
     None
 }
@@ -666,7 +698,7 @@ fn absolute_path(path: &Path) -> Result<PathBuf> {
         return Ok(path.to_path_buf());
     }
     let cwd = std::env::current_dir()
-        .map_err(|err| Error::device(format!("无法获取当前工作目录: {err}")))?;
+        .map_err(|err| Error::device(format!("cannot determine the current directory: {err}")))?;
     Ok(cwd.join(path))
 }
 
@@ -689,8 +721,13 @@ fn canonicalize_root(path: &Path) -> PathBuf {
 
 fn ensure_dir(path: &Path) -> Result<()> {
     fs::create_dir_all(path).map_err(|err| {
-        Error::device(format!("无法创建目录 {}: {err}", path.display()))
-            .with_hint("请确认挂载根目录存在、可写，且没有同名文件")
+        Error::device(format!(
+            "failed to create directory {}: {err}",
+            path.display()
+        ))
+        .with_hint(
+            "Make sure the mount root exists, is writable, and holds no file of the same name",
+        )
     })?;
     #[cfg(unix)]
     {
@@ -717,7 +754,7 @@ fn is_unknown_filesystem(stderr: &str) -> bool {
 
 fn command_detail(status: i32, stderr: &str) -> String {
     if stderr.is_empty() {
-        format!("退出码 {status}")
+        format!("exit code {status}")
     } else {
         stderr.to_string()
     }
@@ -795,7 +832,7 @@ mod tests {
 
         let result = manager
             .mount(&device, Some(&user), false, &[])
-            .expect("dry-run 挂载应当成功");
+            .expect("dry-run mount should succeed");
         assert!(result.dry_run);
         assert!(!result.already_mounted);
         assert_eq!(result.fstype, "vfat");
@@ -813,11 +850,17 @@ mod tests {
         assert_eq!(argv[2], "vfat");
         assert_eq!(argv[3], "-o");
         let options: Vec<&str> = argv[4].split(',').collect();
-        assert!(options.contains(&"nosuid"), "缺少 nosuid: {options:?}");
-        assert!(options.contains(&"nodev"), "缺少 nodev: {options:?}");
-        assert!(options.contains(&"uid=1000"), "缺少 uid=1000: {options:?}");
-        assert!(options.contains(&"gid=1000"), "缺少 gid=1000: {options:?}");
-        assert!(options.contains(&"rw"), "缺少 rw: {options:?}");
+        assert!(options.contains(&"nosuid"), "missing nosuid: {options:?}");
+        assert!(options.contains(&"nodev"), "missing nodev: {options:?}");
+        assert!(
+            options.contains(&"uid=1000"),
+            "missing uid=1000: {options:?}"
+        );
+        assert!(
+            options.contains(&"gid=1000"),
+            "missing gid=1000: {options:?}"
+        );
+        assert!(options.contains(&"rw"), "missing rw: {options:?}");
         assert_eq!(argv[5], "/dev/sdb1");
         assert!(argv[6].ends_with("USB_DISK"));
         // dry-run must not actually invoke mount
@@ -864,17 +907,17 @@ mod tests {
         let config = test_config(&dir);
         let runner = Arc::new(MockRunner::new());
         let mut manager = MountManager::with_dry_run(config, runner.clone(), true);
-        manager.set_mounts_override(vec![mount_entry("/dev/sdb1", "/media/已有盘")]);
+        manager.set_mounts_override(vec![mount_entry("/dev/sdb1", "/media/existing-disk")]);
 
         let device = test_device("sdb1", Some("exfat"), Some("USB"));
         let result = manager.mount(&device, None, false, &[]).unwrap();
         assert!(result.already_mounted);
         assert!(!result.dry_run);
-        assert_eq!(result.target, PathBuf::from("/media/已有盘"));
+        assert_eq!(result.target, PathBuf::from("/media/existing-disk"));
         assert_eq!(result.fstype, "exfat");
         assert!(
             manager.planned_commands().is_empty(),
-            "已挂载时不应再生成计划"
+            "an already mounted device must not produce a plan"
         );
         assert!(!runner.called("mount"));
     }
@@ -892,16 +935,19 @@ mod tests {
 
         let target = dir.join("mnt").join("USB_DISK");
         match manager.mount(&device, None, false, &[]) {
-            Ok(result) => panic!("应当失败，却返回 {result:?}"),
+            Ok(result) => panic!("should have failed but returned {result:?}"),
             Err(err) if err.kind == ErrorKind::Permission => {
                 // A non-root environment returns early at require_root, so skip the assertions
             }
             Err(err) => {
                 assert_eq!(err.kind, ErrorKind::Mount, "{}", err.message);
-                assert!(err.message.contains("挂载"), "{}", err.message);
-                let hint = err.hint.expect("应当带有排查建议");
-                assert!(hint.contains("驱动"), "{hint}");
-                assert!(!target.exists(), "失败后应删除空挂载点");
+                assert!(err.message.contains("mount"), "{}", err.message);
+                let hint = err.hint.expect("should carry a troubleshooting hint");
+                assert!(hint.contains("driver"), "{hint}");
+                assert!(
+                    !target.exists(),
+                    "the empty mount point should be removed after a failure"
+                );
             }
         }
     }
@@ -917,7 +963,7 @@ mod tests {
             .unmount("/media/not-there", false, false, false)
             .unwrap_err();
         assert_eq!(err.kind, ErrorKind::NotMounted);
-        assert!(err.message.contains("当前没有挂载"), "{}", err.message);
+        assert!(err.message.contains("not mounted"), "{}", err.message);
 
         manager.set_mounts_override(vec![mount_entry("/dev/sdb1", "/media/alice/USB")]);
         let target = manager
@@ -954,16 +1000,12 @@ mod tests {
         manager.set_mounts_override(vec![mount_entry("/dev/sdb1", "/media/x")]);
 
         match manager.unmount("/media/x", false, false, false) {
-            Ok(target) => panic!("忙碌时不应成功：{target}"),
+            Ok(target) => panic!("should not succeed while busy: {target}"),
             Err(err) if err.kind == ErrorKind::Permission => {}
             Err(err) => {
                 assert_eq!(err.kind, ErrorKind::Busy, "{}", err.message);
-                assert!(
-                    err.message.contains("正忙") || err.message.contains("busy"),
-                    "{}",
-                    err.message
-                );
-                let hint = err.hint.expect("应当提示 lsof/fuser");
+                assert!(err.message.contains("busy"), "{}", err.message);
+                let hint = err.hint.expect("should hint at lsof/fuser");
                 assert!(hint.contains("lsof"), "{hint}");
                 assert_eq!(
                     runner
@@ -972,7 +1014,7 @@ mod tests {
                         .filter(|(name, _)| name == "umount")
                         .count(),
                     2,
-                    "忙碌时应重试一次"
+                    "umount should be retried once while busy"
                 );
             }
         }
@@ -1011,13 +1053,13 @@ mod tests {
         let err = manager.plan(&blank, None, false, &[], &[]).unwrap_err();
         assert_eq!(err.kind, ErrorKind::Device);
         assert!(
-            err.message.contains("没有可识别的文件系统"),
+            err.message.contains("no recognizable filesystem"),
             "{}",
             err.message
         );
 
         // iso9660 is read-only by default
-        let iso = test_device("sr0", Some("iso9660"), Some("光盘"));
+        let iso = test_device("sr0", Some("iso9660"), Some("CD-ROM"));
         let plan = manager
             .plan(&iso, Some(&test_user()), false, &[], &[])
             .unwrap();
@@ -1027,7 +1069,7 @@ mod tests {
             "{:?}",
             plan.options
         );
-        assert_eq!(plan.target, dir.join("mnt").join("alice").join("光盘"));
+        assert_eq!(plan.target, dir.join("mnt").join("alice").join("CD-ROM"));
     }
 
     #[test]
@@ -1053,26 +1095,26 @@ mod tests {
         assert!(
             diagnose("mount: /media/x: unknown filesystem type 'exfat'.")
                 .unwrap()
-                .contains("驱动")
+                .contains("driver")
         );
         assert!(diagnose("mount: /media/x: wrong fs type, bad option")
             .unwrap()
-            .contains("驱动"));
+            .contains("driver"));
         assert!(diagnose("umount: /media/x: target is busy.")
             .unwrap()
-            .contains("占用"));
+            .contains("busy"));
         assert!(diagnose("mount: /media/x: permission denied")
             .unwrap()
-            .contains("权限"));
+            .contains("Permission"));
         assert!(diagnose("mount: /media/x: already mounted on /media/y")
             .unwrap()
-            .contains("已经挂载"));
+            .contains("already mounted"));
         assert!(diagnose("Transport endpoint is not connected")
             .unwrap()
             .contains("FUSE"));
         assert!(diagnose("mount: /media/x: read-only file system")
             .unwrap()
-            .contains("只读"));
+            .contains("read-only"));
         assert!(
             diagnose("ntfs3: sdb1: volume is dirty and \"force\" flag is not set")
                 .unwrap()

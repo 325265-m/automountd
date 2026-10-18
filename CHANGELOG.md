@@ -22,6 +22,8 @@ and this project follows [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- All Chinese error, hint, log, decision-reason, and test-assertion strings in
+  `core` / `system` / `app` are now English; `--lang zh` only localizes CLI/TUI shell text.
 - Translated all source comments, example-config comments, install-script messages, and systemd metadata
   to English. The CLI/TUI now falls back to English when the locale is unset; Chinese remains available via
   `--lang zh` / `LANG=zh_CN`.

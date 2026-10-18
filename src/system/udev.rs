@@ -168,10 +168,10 @@ impl UdevMonitor {
         if !runner.which("udevadm") {
             return Err(Error::new(
                 ErrorKind::Unsupported,
-                "未找到 udevadm，无法监听 udev 热插拔事件",
+                "udevadm not found; cannot watch for udev hotplug events",
             )
             .with_hint(
-                "请安装 systemd/udev；在容器等无 udev 的环境中可设置 poll_interval_seconds 改用轮询模式",
+                "install systemd/udev, or set poll_interval_seconds to use polling mode in environments without udev such as containers",
             ));
         }
 
@@ -191,13 +191,13 @@ impl UdevMonitor {
         let mut child = command.spawn().map_err(|err| {
             Error::new(
                 ErrorKind::Command,
-                format!("无法启动 udevadm monitor: {err}"),
+                format!("failed to start udevadm monitor: {err}"),
             )
-            .with_hint("请确认 udevadm 可执行，并检查守护进程是否有权限读取内核事件")
+            .with_hint("make sure udevadm is executable and the daemon may read kernel events")
         })?;
         let pid = child.id();
         let stdout = child.stdout.take();
-        logging::debug(format!("已启动 udevadm monitor（pid {pid}）"));
+        logging::debug(format!("started udevadm monitor (pid {pid})"));
 
         std::thread::spawn(move || {
             let mut child = child;
@@ -225,7 +225,7 @@ impl UdevMonitor {
                             }
                         }
                         Err(err) => {
-                            logging::debug(format!("读取 udevadm monitor 输出失败: {err}"));
+                            logging::debug(format!("failed to read udevadm monitor output: {err}"));
                             break;
                         }
                     }
@@ -233,7 +233,7 @@ impl UdevMonitor {
             }
             let _ = flush_events(&mut buffer, sender_ref);
             reap(&mut child);
-            logging::debug("udevadm monitor 已退出");
+            logging::debug("udevadm monitor exited");
         });
 
         Ok(Self { pid })
@@ -246,13 +246,13 @@ impl UdevMonitor {
         }
         if !platform::terminate_process(self.pid) {
             logging::debug(format!(
-                "无法向 udevadm monitor（pid {}）发送终止信号",
+                "failed to signal udevadm monitor (pid {}) to terminate",
                 self.pid
             ));
         }
         std::thread::sleep(Duration::from_millis(300));
         if platform::process_alive(self.pid) && platform::kill_process(self.pid) {
-            logging::debug(format!("已强制结束 udevadm monitor（pid {}）", self.pid));
+            logging::debug(format!("force-killed udevadm monitor (pid {})", self.pid));
         }
     }
 
@@ -271,7 +271,7 @@ fn flush_events(buffer: &mut String, sender: &Sender<UdevEvent>) -> bool {
     buffer.clear();
     for event in events {
         if sender.send(event).is_err() {
-            logging::debug("udev 事件接收端已关闭，停止读取");
+            logging::debug("udev event receiver closed; stopping the reader");
             return false;
         }
     }
@@ -299,7 +299,7 @@ impl PollMonitor {
         };
         std::thread::spawn(move || {
             logging::debug(format!(
-                "启动轮询模式监听块设备，间隔 {} 毫秒",
+                "polling for block devices every {} ms",
                 interval.as_millis()
             ));
             let mut previous: HashSet<String> = HashSet::new();
@@ -327,7 +327,9 @@ impl PollMonitor {
                 // A failed enumeration (lsblk erroring out temporarily) yields an empty set;
                 // do not send remove for every device because of it.
                 if current.is_empty() && !previous.is_empty() {
-                    logging::debug("轮询未枚举到设备，可能是临时失败，跳过本轮差异比较");
+                    logging::debug(
+                        "poll found no devices (possibly a transient failure); skipping this round's diff",
+                    );
                     if !sleep_until(interval) {
                         return;
                     }
@@ -336,13 +338,13 @@ impl PollMonitor {
 
                 for name in current.difference(&previous) {
                     if sender.send(poll_event("add", name)).is_err() {
-                        logging::debug("轮询事件接收端已关闭，停止轮询");
+                        logging::debug("poll event receiver closed; stopping polling");
                         return;
                     }
                 }
                 for name in previous.difference(&current) {
                     if sender.send(poll_event("remove", name)).is_err() {
-                        logging::debug("轮询事件接收端已关闭，停止轮询");
+                        logging::debug("poll event receiver closed; stopping polling");
                         return;
                     }
                 }
@@ -443,7 +445,7 @@ SUBSYSTEM=block
         assert_eq!(
             events.len(),
             2,
-            "只保留 block 的 add/remove/change: {events:?}"
+            "only block add/remove/change events should be kept: {events:?}"
         );
         assert_eq!(events[0].action, "add");
         assert_eq!(events[0].devname, "/dev/sdb");
@@ -478,7 +480,10 @@ SUBSYSTEM=block
         let (sender, _receiver) = std::sync::mpsc::channel();
         let runner = MockRunner::new().missing("udevadm");
         let error = match UdevMonitor::spawn(&runner, sender) {
-            Ok(monitor) => panic!("缺少 udevadm 时应报错，却拿到了 pid {}", monitor.pid()),
+            Ok(monitor) => panic!(
+                "expected an error when udevadm is missing, got pid {}",
+                monitor.pid()
+            ),
             Err(error) => error,
         };
         assert_eq!(error.kind, ErrorKind::Unsupported);

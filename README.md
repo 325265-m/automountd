@@ -148,8 +148,8 @@ automountd --lang en status
 AUTOMOUNTD_LANG=zh automountd doctor
 ```
 
-`--lang` must appear before the subcommand. English currently covers help, the TUI, list/status,
-doctor, and the main command messages; detailed errors from `core`/`system` are still being translated.
+`--lang` must appear before the subcommand. The CLI/TUI shell text (help, tables, prompts, status) is
+localized; errors and logs from `core`/`system` are English-only.
 
 ## Configuration
 

@@ -76,38 +76,42 @@ pub fn unique_dir(parent: &Path, name: &str, reserved: &HashSet<String>) -> Path
 /// Verify that target lies below root and return the normalized path.
 pub fn safe_target(root: &Path, target: &Path) -> Result<PathBuf> {
     let root_real = std::fs::canonicalize(root).map_err(|err| {
-        Error::device(format!("挂载根目录 {} 不可用: {err}", root.display()))
-            .with_hint("请确认该目录存在且可访问")
+        Error::device(format!(
+            "mount root {} is not usable: {err}",
+            root.display()
+        ))
+        .with_hint("make sure the directory exists and is accessible")
     })?;
     let target_real = canonicalize_allow_missing(target)?;
     if target_real == root_real {
         return Err(Error::device(format!(
-            "挂载点不能等于挂载根目录 {}",
+            "mount point must not be the mount root {}",
             root.display()
         )));
     }
     if !target_real.starts_with(&root_real) {
         return Err(Error::device(format!(
-            "挂载点 {} 不在允许的根目录 {} 之内",
+            "mount point {} is outside the allowed root {}",
             target.display(),
             root.display()
         ))
-        .with_hint("卷标可能包含可疑字符，已拒绝操作"));
+        .with_hint("the label may contain suspicious characters; the operation was rejected"));
     }
     Ok(target_real)
 }
 
 fn canonicalize_allow_missing(path: &Path) -> Result<PathBuf> {
     if path.exists() {
-        return std::fs::canonicalize(path)
-            .map_err(|err| Error::device(format!("无法解析路径 {}: {err}", path.display())));
+        return std::fs::canonicalize(path).map_err(|err| {
+            Error::device(format!("cannot resolve path {}: {err}", path.display()))
+        });
     }
     let parent = path
         .parent()
-        .ok_or_else(|| Error::device(format!("路径 {} 没有父目录", path.display())))?;
+        .ok_or_else(|| Error::device(format!("path {} has no parent directory", path.display())))?;
     let name = path
         .file_name()
-        .ok_or_else(|| Error::device(format!("路径 {} 缺少文件名", path.display())))?;
+        .ok_or_else(|| Error::device(format!("path {} has no file name", path.display())))?;
     let parent_real = canonicalize_allow_missing(parent)?;
     Ok(parent_real.join(name))
 }
@@ -121,11 +125,11 @@ pub fn check_no_symlink_components(root: &Path, target: &Path) -> Result<()> {
     let target_abs = absolute_path(target)?;
     let Ok(relative) = target_abs.strip_prefix(&root_abs) else {
         return Err(Error::device(format!(
-            "挂载点 {} 不在允许的根目录 {} 之内",
+            "mount point {} is outside the allowed root {}",
             target.display(),
             root.display()
         ))
-        .with_hint("卷标可能包含可疑字符，已拒绝操作"));
+        .with_hint("the label may contain suspicious characters; the operation was rejected"));
     };
     let mut current = root_abs;
     for component in relative.components() {
@@ -135,10 +139,12 @@ pub fn check_no_symlink_components(root: &Path, target: &Path) -> Result<()> {
                 match std::fs::symlink_metadata(&current) {
                     Ok(metadata) if metadata.file_type().is_symlink() => {
                         return Err(Error::device(format!(
-                            "挂载路径中包含符号链接: {}",
+                            "mount path contains a symlink: {}",
                             current.display()
                         ))
-                        .with_hint("为避免路径劫持，请删除该链接或更换卷标"));
+                        .with_hint(
+                            "to avoid path hijacking, remove the link or use a different label",
+                        ));
                     }
                     Ok(_) => {}
                     Err(err) if err.kind() == std::io::ErrorKind::NotFound => break,
@@ -146,7 +152,7 @@ pub fn check_no_symlink_components(root: &Path, target: &Path) -> Result<()> {
                 }
             }
             Component::ParentDir => {
-                return Err(Error::device("挂载路径不能包含 .."));
+                return Err(Error::device("mount path must not contain .."));
             }
             _ => {}
         }
@@ -158,8 +164,9 @@ fn absolute_path(path: &Path) -> Result<PathBuf> {
     if path.is_absolute() {
         return Ok(path.to_path_buf());
     }
-    let cwd = std::env::current_dir()
-        .map_err(|err| Error::device(format!("无法获取当前工作目录: {err}")))?;
+    let cwd = std::env::current_dir().map_err(|err| {
+        Error::device(format!("cannot determine current working directory: {err}"))
+    })?;
     Ok(cwd.join(path))
 }
 

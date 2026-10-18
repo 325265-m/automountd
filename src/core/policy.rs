@@ -27,7 +27,7 @@ fn is_blocked(device: &BlockDevice, config: &Config) -> Option<Decision> {
         if blocked_uuids.contains(&uuid.to_ascii_uppercase()) {
             return Some(Decision::deny_with(
                 "blocked",
-                format!("UUID {uuid} 在排除列表中"),
+                format!("UUID {uuid} is in the exclusion list"),
             ));
         }
     }
@@ -39,7 +39,7 @@ fn is_blocked(device: &BlockDevice, config: &Config) -> Option<Decision> {
         {
             return Some(Decision::deny_with(
                 "blocked",
-                format!("卷标 {label} 在排除列表中"),
+                format!("label {label} is in the exclusion list"),
             ));
         }
     }
@@ -66,7 +66,10 @@ pub fn should_automount(
     if NON_DATA_TYPES.contains(&device.dev_type.as_str()) {
         return Decision::deny_with(
             "not-a-data-device",
-            format!("设备类型 {} 不支持自动挂载", device.dev_type),
+            format!(
+                "device type {} does not support auto-mounting",
+                device.dev_type
+            ),
         );
     }
     if !device.path.starts_with("/dev/") {
@@ -79,13 +82,16 @@ pub fn should_automount(
         return Decision::deny_with(
             "ignored-fstype",
             format!(
-                "文件系统 {} 在 ignored_fstypes 中",
+                "filesystem {} is in ignored_fstypes",
                 device.fstype.as_deref().unwrap_or("?")
             ),
         );
     }
     if device.size > 0 && device.size < MIN_SIZE_BYTES {
-        return Decision::deny_with("too-small", format!("设备容量仅 {} 字节", device.size));
+        return Decision::deny_with(
+            "too-small",
+            format!("device capacity is only {} bytes", device.size),
+        );
     }
     if let Some(decision) = is_blocked(device, config) {
         return decision;
@@ -103,7 +109,7 @@ pub fn should_automount(
     if !allowed_by_uuid && !config.auto_mount_internal_disks && !device.is_external() {
         return Decision::deny_with(
             "internal-disk",
-            "内置磁盘未开启自动挂载（可设置 auto_mount_internal_disks = true 或用 allowed_uuids 指定）",
+            "internal disk auto-mount is disabled (set auto_mount_internal_disks = true or list it in allowed_uuids)",
         );
     }
     if !crate::mountinfo::find_by_source(&device.path, mounts).is_empty() {
@@ -123,7 +129,7 @@ pub fn should_mount_manual(
     if !data_type && !force {
         return Decision::deny_with(
             "not-a-data-device",
-            format!("设备类型 {} 不支持挂载", device.dev_type),
+            format!("device type {} does not support mounting", device.dev_type),
         );
     }
     if !device.has_filesystem() {
@@ -133,7 +139,10 @@ pub fn should_mount_manual(
         return Decision::deny("ignored-fstype");
     }
     if on_system_disk(device, system_disks) && !force {
-        return Decision::deny_with("system-disk", "该设备承载系统目录；确需挂载请加 --force");
+        return Decision::deny_with(
+            "system-disk",
+            "this device holds system directories; use --force to mount it anyway",
+        );
     }
     Decision::allow("ok")
 }
