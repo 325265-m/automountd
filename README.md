@@ -264,6 +264,8 @@ SECURITY.md             安全策略
 SUPPORT.md              支持说明
 CHANGELOG.md            版本变更
 NOTICE                  GPL 版权与授权声明
+AGENTS.md               AI 编码代理规则
+AI_USAGE.md             AI 使用披露与政策
 ```
 
 ## 已知限制
@@ -273,9 +275,18 @@ NOTICE                  GPL 版权与授权声明
 - 挂载策略以“可移动/USB”为主；内置数据盘需显式开启或加入 `allowed_uuids`。
 - 单元测试覆盖解析、策略、协议和命令拼装；真实 `mount` 行为依赖内核与工具链，需在目标发行版上验证。
 
+## AI 使用说明
+
+本项目在开发中使用了 AI 辅助（DeepSeek Harness `ai_team` 多代理并行实现与多轮审查）。
+AI 产出需经过测试、静态检查与审查，不作为正确性保证；真实挂载行为仍需在 Linux 上验证。
+
+- AI 参与范围、验证过程、已知局限与贡献者披露政策：[AI_USAGE.md](AI_USAGE.md)
+- AI 编码代理（Codex / Cursor / Copilot / Claude Code / DSH 等）的仓库规则：[AGENTS.md](AGENTS.md)
+
 ## 参与贡献
 
 - 开发环境、编码约定与 PR 流程：[CONTRIBUTING.md](CONTRIBUTING.md)
+- AI 辅助贡献的披露要求：[AI_USAGE.md](AI_USAGE.md)
 - 行为准则：[CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)
 - 漏洞报告（请勿公开披露）：[SECURITY.md](SECURITY.md)
 - 提问与支持：[SUPPORT.md](SUPPORT.md)

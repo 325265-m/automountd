@@ -29,6 +29,7 @@ Closes #
 - [ ] 在 Linux 实机验证（如涉及 mount/udev/权限，请注明发行版与内核）
 - [ ] 新增/更新了对应测试
 - [ ] 更新了 `README.md` / `CHANGELOG.md`（行为变更）
+- [ ] 如使用 AI 辅助，已在描述中说明工具、范围与验证方式（见 `AI_USAGE.md`）
 
 ## 安全影响
 

@@ -9,7 +9,8 @@
 
 ### Added
 
-- 暂无
+- 新增 `AI_USAGE.md`（AI 参与范围、验证、局限与贡献者披露政策）、`AGENTS.md`（AI 编码代理规则）
+  与 `.github/copilot-instructions.md`。
 
 ### Changed
 
